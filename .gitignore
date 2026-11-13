@@ -1,0 +1,15 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.build/
+build/
+bin/
+dist/
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+recordings/
+models/
+tmp/
