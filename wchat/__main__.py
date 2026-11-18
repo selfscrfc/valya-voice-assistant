@@ -53,6 +53,9 @@ async def main(args):
             emit("device", name, id=index)
         return 0
     voice_enabled = not args.text and args.once is None
+    if args.text:
+        emit("voice_disabled", "Микрофон выключен: запуск с --text включает только письменный чат. "
+             "Для голоса перезапустите без --text, например ./run --device 'MacBook Pro Microphone'.")
     if args.transcribe_only and not voice_enabled:
         raise ValueError("--transcribe-only используется с микрофоном или --wav")
     if voice_enabled and not args.voice_model.is_dir():

@@ -117,6 +117,18 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CLITests(unittest.TestCase):
+    def test_text_mode_explicitly_reports_that_microphone_is_off(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run([sys.executable, "-m", "wchat", "--text", "--codex", FAKE,
+                                     "--data-dir", directory, "--json"],
+                                    input="/quit\n", capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            events = [json.loads(line) for line in result.stdout.splitlines()]
+            notices = [e for e in events if e["kind"] == "voice_disabled"]
+            self.assertEqual(len(notices), 1)
+            self.assertIn("--text", notices[0]["text"])
+            self.assertFalse(any(e["kind"] == "voice_ready" for e in events))
+
     def test_real_cli_entry_streams_and_persists(self):
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run([sys.executable, "-m", "wchat", "--once", "entry",
