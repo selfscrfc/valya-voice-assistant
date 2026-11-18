@@ -9,9 +9,10 @@ class RPCError(RuntimeError):
 class Codex:
     """One owned app-server process; stdout is consumed by exactly one reader."""
 
-    def __init__(self, on_event, executable="codex"):
+    def __init__(self, on_event, executable="codex", approval_policy="never"):
         self.on_event = on_event
         self.executable = executable
+        self.approval_policy = approval_policy
         self.pending = {}
         self.counter = 0
         self.process = None
@@ -23,6 +24,7 @@ class Codex:
         self.log = open(log_path, "ab", buffering=0)
         self.process = await asyncio.create_subprocess_exec(
             self.executable, "app-server", "--listen", "stdio://", "-c", 'model_provider="openai"',
+            "-c", 'approval_policy=' + json.dumps(self.approval_policy),
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=self.log, limit=16 * 1024 * 1024,
         )

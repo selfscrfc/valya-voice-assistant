@@ -31,6 +31,8 @@ def parser():
     p.add_argument("--cwd", type=Path, help="Folder for new conversations; default ~/Documents/jack")
     p.add_argument("--session", help="Create or select a named conversation")
     p.add_argument("--model", help="Codex model; defaults to the installed CLI setting")
+    p.add_argument("--approval-policy", choices=("never", "on-request"), default="never",
+                   help="Permission mode: never (default), or ask on request")
     p.add_argument("--codex", default="codex", help=argparse.SUPPRESS)
     p.add_argument("--turn-timeout", type=float, default=600)
     p.add_argument("--ui", action="store_true", help="JSON protocol for the desktop client")
@@ -66,7 +68,7 @@ async def main(args):
         raise ValueError(f"Model not found: {args.voice_model}; run make setup")
     store = Store(args.data_dir)
     assistant = Assistant(store, emit, executable=args.codex, model=args.model, turn_timeout=args.turn_timeout,
-                          interactive=args.once is None and args.wav is None)
+                          interactive=args.once is None and args.wav is None, approval_policy=args.approval_policy)
     ui = UIProtocol(assistant)
     stop_audio = threading.Event()
     voice_thread = None

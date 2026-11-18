@@ -138,6 +138,7 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.app.halted)
 
     async def test_explicit_permission_decision_only(self):
+        self.app.approval_policy = "on-request"
         self.app.on_event({"id": "approve-1", "method": "item/commandExecution/requestApproval", "params": {"command": "example"}})
         self.assertIn("approve-1", self.app.requests)
         await self.app.command("/approve approve-1 no")
@@ -165,6 +166,7 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
         self.app.codex.reply.assert_not_awaited()
 
     async def test_noninteractive_permissions_are_declined(self):
+        self.app.approval_policy = "on-request"
         self.app.interactive = False
         self.app.codex.reply = AsyncMock()
         self.app.on_event({"id": "approval", "method": "item/fileChange/requestApproval", "params": {}})

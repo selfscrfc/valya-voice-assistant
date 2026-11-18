@@ -20,7 +20,7 @@ class UITests(unittest.IsolatedAsyncioTestCase):
         self.store.create('default', self.tmp.name)
         self.store.save_context('', self.tmp.name)
         self.events = []
-        self.app = Assistant(self.store, lambda kind, text, **kw: self.events.append((kind, kw)), FAKE)
+        self.app = Assistant(self.store, lambda kind, text, **kw: self.events.append((kind, kw)), FAKE, approval_policy='on-request')
         await self.app.start()
         self.ui = UIProtocol(self.app)
 

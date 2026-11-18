@@ -8,10 +8,13 @@ from .speech import SpeechPlayer, split_speech_request, spoken_summary, SPEECH_I
 
 
 class Assistant:
-    def __init__(self, store, emit, executable="codex", model=None, turn_timeout=600, interactive=True):
+    def __init__(self, store, emit, executable="codex", model=None, turn_timeout=600, interactive=True, approval_policy="never"):
         self.store, self.emit = store, emit
         self.model, self.turn_timeout = model, turn_timeout
-        self.codex = Codex(self.on_event, executable)
+        if approval_policy not in ("never", "on-request"):
+            raise ValueError("Unknown approval policy")
+        self.approval_policy = approval_policy
+        self.codex = Codex(self.on_event, executable, approval_policy=approval_policy)
         self.queue = asyncio.Queue()
         self.waiters = {}
         self.loaded = set()
@@ -57,6 +60,24 @@ class Assistant:
         params = message.get("params", {})
         if "id" in message:
             request_id = str(message["id"])
+            if self.approval_policy == "never":
+                result = None
+                if method in ("item/commandExecution/requestApproval", "item/fileChange/requestApproval"):
+                    result = {"decision": "accept"}
+                elif method == "mcpServer/elicitation/request":
+                    schema = params.get("requestedSchema", {})
+                    metadata = params.get("_meta", {})
+                    # Only explicit, input-free tool consent. Never invent answers or complete sign-in forms.
+                    if (params.get("mode") == "form" and isinstance(schema, dict) and isinstance(metadata, dict)
+                            and metadata.get("codex_approval_kind") == "mcp_tool_call"
+                            and schema.get("type") == "object" and schema.get("properties") == {}
+                            and not schema.get("required")
+                            and set(schema) <= {"type", "properties", "required", "additionalProperties", "title", "description", "$schema"}):
+                        result = {"action": "accept", "content": {}}
+                if result is not None:
+                    self.spawn_reply(message["id"], result)
+                    self.emit("permission_granted", method, request=request_id)
+                    return
             if method in ("item/commandExecution/requestApproval", "item/fileChange/requestApproval",
                           "item/tool/requestUserInput", "mcpServer/elicitation/request"):
                 if not self.interactive:
@@ -113,7 +134,7 @@ class Assistant:
         session = self.store.session(name)
         if name in self.loaded:
             return session["thread_id"]
-        params = {"cwd": session["cwd"], "sandbox": "workspace-write", "approvalPolicy": "on-request"}
+        params = {"cwd": session["cwd"], "sandbox": "workspace-write", "approvalPolicy": self.approval_policy}
         if self.model:
             params["model"] = self.model
         if session["thread_id"]:
