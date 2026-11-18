@@ -61,6 +61,7 @@ struct Permission: Identifiable {
     @Published var permissions: [Permission] = []
     @Published var connection = "Подключение…"
     @Published var microphone = "Запуск микрофона…"
+    private var microphoneName = ""
     @Published var error: String?
     @Published var connected = false
     @Published var revision = 0
@@ -180,9 +181,12 @@ struct Permission: Identifiable {
             }
         case "queued", "started", "finished", "requests_changed", "approval", "session":
             send(["action": "snapshot"])
-        case "voice_ready": microphone = "Слушаю: «чат» · " + text
+        case "voice_ready": microphoneName = text; microphone = "Слушаю: «чат» · " + text
         case "voice_wake": microphone = "Слушаю поручение…"
-        case "voice_prompt", "voice_discard": microphone = "Слушаю: «чат»"
+        case "voice_prompt": microphone = "Слушаю: «чат» · " + microphoneName
+        case "voice_discard":
+            if microphone.hasPrefix("Слушаю") { microphone = "Слушаю: «чат» · " + microphoneName }
+        case "voice_waiting": microphoneName = ""; microphone = text
         case "voice_disabled", "voice_end": microphone = "Микрофон выключен"
         case "voice_error": microphone = "Ошибка микрофона"; error = text
         case "error": error = text; send(["action": "snapshot"])
@@ -516,7 +520,7 @@ struct ChatView: View {
                     .lineLimit(1).truncationMode(.middle).help(model.cwd)
             }
             Spacer(minLength: 10)
-            Label(model.microphone.components(separatedBy: " · ").first ?? model.microphone,
+            Label(model.microphone,
                   systemImage: model.microphone.contains("выключен") ? "mic.slash" : "mic")
                 .font(.system(size: 11)).foregroundStyle(Ink.muted).lineLimit(1).help(model.microphone)
         }.padding(.horizontal, 30).padding(.vertical, 22)

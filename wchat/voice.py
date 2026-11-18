@@ -73,17 +73,125 @@ def devices():
     return [(i, d["name"]) for i, d in enumerate(sd.query_devices()) if d["max_input_channels"] > 0]
 
 
-def select_device(requested):
-    options = devices()
-    if requested is not None and requested.isdecimal():
+def select_device(requested, options=None):
+    options = devices() if options is None else options
+    if requested is None or requested.casefold() == "auto":
+        from .audio_devices import MacAudio, automatic_candidates
+        candidates = automatic_candidates(options, MacAudio().devices())
+        if not candidates:
+            raise ValueError("Не найден DJI или встроенный микрофон Mac")
+        return candidates[0][0]
+    if requested.isdecimal():
         matches = [i for i, _ in options if i == int(requested)]
     else:
-        term = requested if requested is not None else "DJI"
-        matches = [i for i, name in options if term.casefold() in name.casefold()]
+        matches = [i for i, name in options if requested.casefold() in name.casefold()]
     if len(matches) != 1:
         raise ValueError("Выберите один микрофон: --devices, затем --device ID или уникальное имя. "
-                         "Автоматическая подмена DJI другим микрофоном отключена.")
+                         "Для автоматического выбора используйте --device auto.")
     return matches[0]
+
+
+class AudioInputError(RuntimeError):
+    pass
+
+
+def capture_stream(sd, selected, name, feed, emit, stop, changed):
+    blocks = queue.Queue(maxsize=40)
+    overflow = False
+
+    def callback(indata, frames, timing, status):
+        nonlocal overflow
+        if status:
+            overflow = True
+        try:
+            blocks.put_nowait(bytes(indata))
+        except queue.Full:
+            overflow = True
+
+    with sd.RawInputStream(samplerate=16000, blocksize=1600, device=selected,
+                           dtype="int16", channels=1, callback=callback) as stream:
+        emit(VoiceEvent("ready", name))
+        last_audio = time.monotonic()
+        while not stop.is_set():
+            if changed():
+                return
+            if overflow:
+                raise AudioInputError("Потеря аудиоданных; повторите поручение")
+            if not stream.active:
+                raise AudioInputError("Микрофон отключён")
+            try:
+                data = blocks.get(timeout=.2)
+            except queue.Empty:
+                if time.monotonic() - last_audio > 1:
+                    raise AudioInputError("Микрофон перестал передавать звук") from None
+                continue
+            last_audio = time.monotonic()
+            feed(data, last_audio)
+
+
+def capture_microphone(sd, feed, reset, emit, stop, requested=None, inventory=None, clock=time.monotonic,
+                       capture=capture_stream):
+    """Own exactly one stream. Rescan PortAudio only after that stream has closed."""
+    if requested is not None and requested.casefold() != "auto":
+        selected = select_device(requested)
+        capture(sd, selected, sd.query_devices(selected)["name"], feed, emit, stop, lambda: False)
+        return
+    from .audio_devices import MacAudio, automatic_candidates
+    inventory = inventory or MacAudio()
+    failed_until = {}
+    refresh = True
+    last_notice = None
+    while not stop.is_set():
+        try:
+            hardware = inventory.devices()
+            if refresh:
+                # PortAudio caches the CoreAudio device list. Never reinitialize an open stream.
+                sd._terminate()
+                sd._initialize()
+                refresh = False
+            options = [(i, d["name"]) for i, d in enumerate(sd.query_devices()) if d["max_input_channels"] > 0]
+            candidates = automatic_candidates(options, hardware)
+            available = [(i, n) for i, n in candidates if failed_until.get(n, 0) <= clock()]
+            if not available:
+                notice = "Ожидаю DJI или встроенный микрофон Mac"
+                if notice != last_notice:
+                    emit(VoiceEvent("waiting", notice))
+                    last_notice = notice
+                stop.wait(2)
+                refresh = True
+                continue
+            selected, name = available[0]
+            last_notice = None
+            next_check = clock() + 2
+
+            def changed():
+                nonlocal next_check
+                now = clock()
+                if now < next_check:
+                    return False
+                next_check = now + 2
+                if inventory.devices() != hardware:
+                    return True
+                # Retry a failed preferred receiver after its cooldown, keeping Mac active meanwhile.
+                return any(failed_until.get(n, 0) <= now for _, n in candidates[:candidates.index((selected, name))])
+
+            try:
+                capture(sd, selected, name, feed, emit, stop, changed)
+            except (sd.PortAudioError, AudioInputError, OSError) as exc:
+                failed_until[name] = clock() + 10
+                emit(VoiceEvent("waiting", f"{name}: {exc}. Выбираю доступный микрофон"))
+            finally:
+                # Never combine the start of a command from one input with another input's audio.
+                reset()
+                emit(VoiceEvent("discard", "Захват прерван; повторите поручение после готовности микрофона"))
+            refresh = True
+        except (sd.PortAudioError, OSError) as exc:
+            notice = "Ожидаю микрофон: " + str(exc)
+            if notice != last_notice:
+                emit(VoiceEvent("waiting", notice))
+                last_notice = notice
+            stop.wait(2)
+            refresh = True
 
 
 def listen(model_path, emit, stop, device=None, wav_path=None, wake_word="чат"):
@@ -121,31 +229,8 @@ def listen(model_path, emit, stop, device=None, wav_path=None, wake_word="чат
         return
 
     import sounddevice as sd
-    selected = select_device(device)
-    info = sd.query_devices(selected)
-    original_name = info["name"]
-    blocks = queue.Queue(maxsize=40)
-    overflow = False
+    def reset():
+        gate.reset()
+        recognizer.Reset()
 
-    def callback(indata, frames, timing, status):
-        nonlocal overflow
-        if status:
-            overflow = True
-        try:
-            blocks.put_nowait(bytes(indata))
-        except queue.Full:
-            overflow = True
-
-    with sd.RawInputStream(samplerate=rate, blocksize=1600, device=selected,
-                           dtype="int16", channels=1, callback=callback) as stream:
-        emit(VoiceEvent("ready", original_name))
-        while not stop.is_set():
-            if overflow:
-                raise RuntimeError("Потеря аудиоданных: прослушивание остановлено, повторите поручение")
-            try:
-                data = blocks.get(timeout=1)
-            except queue.Empty:
-                raise RuntimeError("Микрофон перестал передавать звук; прослушивание остановлено") from None
-            if not stream.active:
-                raise RuntimeError("Микрофон отключён")
-            feed(data, time.monotonic())
+    capture_microphone(sd, feed, reset, emit, stop, requested=device)

@@ -23,7 +23,7 @@ def parser():
     modes.add_argument("--once", help="Одно письменное поручение, затем выход")
     modes.add_argument("--wav", type=Path, help="Вместо микрофона прочитать PCM16 mono 16 kHz WAV")
     p.add_argument("--devices", action="store_true", help="Показать доступные микрофоны и выйти")
-    p.add_argument("--device", help="ID или уникальная часть имени микрофона; по умолчанию поиск DJI")
+    p.add_argument("--device", help="auto (по умолчанию): DJI, иначе встроенный Mac; либо ID/уникальное имя")
     p.add_argument("--voice-model", type=Path, default=ROOT / "models/vosk-model-small-ru-0.22")
     p.add_argument("--wake-word", default="чат")
     p.add_argument("--transcribe-only", action="store_true", help="Проверять активацию локально, без Codex")

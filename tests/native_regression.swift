@@ -19,6 +19,12 @@ import Foundation
             try receive(["kind": "voice_discard", "text": ""])
         }
         check(model.revision == initial, "microphone state changes must not request transcript layout/scroll")
+        try receive(["kind": "voice_waiting", "text": "Ожидаю микрофон"])
+        try receive(["kind": "voice_discard", "text": ""])
+        check(model.microphone == "Ожидаю микрофон", "discard must not claim a disconnected microphone is listening")
+        try receive(["kind": "voice_ready", "text": "Wireless Mic Rx"])
+        try receive(["kind": "voice_prompt", "text": "test"])
+        check(model.microphone.contains("Wireless Mic Rx"), "selected device must remain visible after a command")
         let params = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: "tests/fixtures/clock-permission.json")))
         snapshot["requests"] = ["clock": ["method": "mcpServer/elicitation/request", "params": params]]
         for _ in 0..<100 { try receive(snapshot) }
