@@ -8,6 +8,7 @@ MAC = AudioDevice(1, 'MacBook Pro Microphone', 'Apple Inc.', True)
 DJI = AudioDevice(2, 'Wireless Mic Rx', 'DJI Technology Co., Ltd.', False)
 VIRTUAL = AudioDevice(3, 'BlackHole 64ch', 'Existential Audio', False)
 PHONE = AudioDevice(4, 'Phone Microphone', 'Apple Inc.', False)
+AIRPODS = AudioDevice(5, 'Jack’s AirPods Pro', 'Apple Inc.', False)
 
 
 class Stop:
@@ -47,6 +48,50 @@ class DeviceTests(unittest.TestCase):
         self.assertEqual(automatic_candidates(options, items), [(3, DJI.name), (1, MAC.name)])
         self.assertEqual(automatic_candidates(options[:3], items[:3]), [(1, MAC.name)])
         self.assertEqual(automatic_candidates([(0, PHONE.name), (1, VIRTUAL.name)], [PHONE, VIRTUAL]), [])
+
+    def test_airpods_rank_between_dji_and_mac(self):
+        items = [MAC, AIRPODS, PHONE, VIRTUAL, DJI]
+        options = [(i, d.name) for i, d in enumerate(items)]
+        self.assertEqual(automatic_candidates(options, items), [(4, DJI.name), (1, AIRPODS.name), (0, MAC.name)])
+        self.assertEqual(automatic_candidates(options[:-1], items[:-1]), [(1, AIRPODS.name), (0, MAC.name)])
+        for name in ('AirPods', 'AIRPODS PRO', 'Personal AirPods Max'):
+            device = AudioDevice(6, name, 'Apple Inc.', False)
+            self.assertEqual(automatic_candidates([(0, name)], [device]), [(0, name)])
+        virtual = AudioDevice(6, 'AirPods virtual', 'Example Audio', False)
+        self.assertEqual(automatic_candidates([(0, virtual.name)], [virtual]), [])
+
+    def test_live_order_mac_airpods_dji_airpods_mac(self):
+        states = [[MAC], [MAC, AIRPODS], [MAC, AIRPODS, DJI], [MAC, AIRPODS], [MAC]]
+        inventory, stop, now, opened = Inventory(states[0]), Stop(), [0], []
+        audio, reset = Audio(inventory), Mock()
+        def capture(sd, selected, name, feed, emit, stopping, changed):
+            sd.active = True
+            try:
+                opened.append(name)
+                if len(opened) == len(states):
+                    stop.set(); return
+                inventory.current = states[len(opened)]
+                now[0] += 59
+                self.assertFalse(changed())
+                now[0] += 1
+                self.assertTrue(changed())
+            finally:
+                sd.active = False
+        capture_microphone(audio, Mock(), reset, Mock(), stop, inventory=inventory,
+                           clock=lambda: now[0], capture=capture)
+        self.assertEqual(opened, [MAC.name, AIRPODS.name, DJI.name, AIRPODS.name, MAC.name])
+        self.assertEqual(reset.call_count, 5)
+
+    def test_unavailable_dji_then_airpods_falls_back_to_mac(self):
+        inventory, stop, opened = Inventory([MAC, AIRPODS, DJI]), Stop(), []
+        def capture(sd, selected, name, feed, emit, stopping, changed):
+            opened.append(name)
+            if name != MAC.name:
+                raise sd.PortAudioError('unavailable')
+            stop.set()
+        capture_microphone(Audio(inventory), Mock(), Mock(), Mock(), stop, inventory=inventory,
+                           clock=lambda: 0, capture=capture)
+        self.assertEqual(opened, [DJI.name, AIRPODS.name, MAC.name])
 
     def test_explicit_missing_device_does_not_fall_back(self):
         with patch('wchat.voice.devices', return_value=[(0, MAC.name)]):

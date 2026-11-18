@@ -71,12 +71,13 @@ class MacAudio:
 
 
 def automatic_candidates(options, hardware):
-    """Prefer DJI hardware, then built-in input. Never select arbitrary/virtual inputs."""
+    """Prefer DJI, then AirPods, then built-in input. Exclude arbitrary/virtual inputs."""
     ranked = []
     for index, name in options:
         matches = [d for d in hardware if d.name == name]
         dji = 'dji' in name.casefold() or any('dji' in d.manufacturer.casefold() for d in matches)
+        airpods = any('airpods' in d.name.casefold() and 'apple' in d.manufacturer.casefold() for d in matches)
         builtin = any(d.builtin for d in matches)
-        if dji or builtin:
-            ranked.append((0 if dji else 1, name, index))
+        if dji or airpods or builtin:
+            ranked.append((0 if dji else 1 if airpods else 2, name, index))
     return [(index, name) for _, name, index in sorted(ranked)]

@@ -82,7 +82,7 @@ def select_device(requested, options=None):
         from .audio_devices import MacAudio, automatic_candidates
         candidates = automatic_candidates(options, MacAudio().devices())
         if not candidates:
-            raise ValueError("No DJI or built-in Mac microphone found")
+            raise ValueError("No DJI, AirPods or built-in Mac microphone found")
         return candidates[0][0]
     if requested.isdecimal():
         matches = [i for i, _ in options if i == int(requested)]
@@ -156,7 +156,7 @@ def capture_microphone(sd, feed, reset, emit, stop, requested=None, inventory=No
             candidates = automatic_candidates(options, hardware)
             available = [(i, n) for i, n in candidates if failed_until.get(n, 0) <= clock()]
             if not available:
-                notice = "Waiting for a DJI or built-in Mac microphone"
+                notice = "Waiting for DJI, AirPods or a built-in Mac microphone"
                 if notice != last_notice:
                     emit(VoiceEvent("waiting", notice))
                     last_notice = notice
@@ -175,7 +175,7 @@ def capture_microphone(sd, feed, reset, emit, stop, requested=None, inventory=No
                 next_check = now + DEVICE_CHECK_INTERVAL
                 if inventory.devices() != hardware:
                     return True
-                # Retry a failed preferred receiver after its cooldown, keeping Mac active meanwhile.
+                # Retry a failed preferred receiver after its cooldown, keeping the fallback input active meanwhile.
                 return any(failed_until.get(n, 0) <= now for _, n in candidates[:candidates.index((selected, name))])
 
             try:

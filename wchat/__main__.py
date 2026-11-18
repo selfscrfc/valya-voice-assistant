@@ -26,7 +26,7 @@ def parser():
     modes.add_argument("--once", help="Send one text request, then exit")
     modes.add_argument("--wav", type=Path, help="Read PCM16 mono 16 kHz WAV instead of microphone audio")
     p.add_argument("--devices", action="store_true", help="List available microphones and exit")
-    p.add_argument("--device", help="auto (default): DJI, otherwise built-in Mac; or ID/unique name")
+    p.add_argument("--device", help="auto (default): DJI, then AirPods, then built-in Mac; or ID/unique name")
     p.add_argument("--voice-model", type=Path, default=ROOT / "models/vosk-model-small-ru-0.22")
     p.add_argument("--asr", choices=("hybrid", "vosk"), default="hybrid", help="hybrid: Vosk wake detection + Whisper commands")
     p.add_argument("--whisper-model", type=Path, default=DEFAULT_MODEL)
