@@ -6,6 +6,9 @@ import time
 import wave
 
 
+DEVICE_CHECK_INTERVAL = 60
+
+
 @dataclass
 class VoiceEvent:
     kind: str
@@ -157,19 +160,19 @@ def capture_microphone(sd, feed, reset, emit, stop, requested=None, inventory=No
                 if notice != last_notice:
                     emit(VoiceEvent("waiting", notice))
                     last_notice = notice
-                stop.wait(2)
+                stop.wait(DEVICE_CHECK_INTERVAL)
                 refresh = True
                 continue
             selected, name = available[0]
             last_notice = None
-            next_check = clock() + 2
+            next_check = clock() + DEVICE_CHECK_INTERVAL
 
             def changed():
                 nonlocal next_check
                 now = clock()
                 if now < next_check:
                     return False
-                next_check = now + 2
+                next_check = now + DEVICE_CHECK_INTERVAL
                 if inventory.devices() != hardware:
                     return True
                 # Retry a failed preferred receiver after its cooldown, keeping Mac active meanwhile.
@@ -190,7 +193,7 @@ def capture_microphone(sd, feed, reset, emit, stop, requested=None, inventory=No
             if notice != last_notice:
                 emit(VoiceEvent("waiting", notice))
                 last_notice = notice
-            stop.wait(2)
+            stop.wait(DEVICE_CHECK_INTERVAL)
             refresh = True
 
 

@@ -16,7 +16,10 @@ class Stop:
         self.on_wait = on_wait
     def is_set(self): return self.stopped
     def set(self): self.stopped = True
-    def wait(self, seconds): self.on_wait(); return self.stopped
+    def wait(self, seconds):
+        self.last_wait = seconds
+        self.on_wait()
+        return self.stopped
 
 
 class Inventory:
@@ -70,7 +73,9 @@ class DeviceTests(unittest.TestCase):
                 else:
                     self.assertFalse(gate.armed)
                     stop.set(); return
-                now[0] += 3
+                now[0] += 59
+                self.assertFalse(changed())
+                now[0] += 1
                 self.assertTrue(changed())
             finally: sd.active = False
         capture_microphone(audio, Mock(), reset, events.append, stop, inventory=inventory,
@@ -88,7 +93,8 @@ class DeviceTests(unittest.TestCase):
             if len(opened) == 1: raise sd.PortAudioError('disconnected')
             if len(opened) == 2:
                 now[0] = 3; self.assertFalse(changed())
-                now[0] = 12; self.assertTrue(changed())
+                now[0] = 12; self.assertFalse(changed())
+                now[0] = 60; self.assertTrue(changed())
             else: stop.set()
         capture_microphone(audio, Mock(), Mock(), Mock(), stop, inventory=inventory,
                            clock=lambda: now[0], capture=capture)
@@ -104,3 +110,4 @@ class DeviceTests(unittest.TestCase):
                            inventory=inventory, capture=capture)
         self.assertEqual(opened, [MAC.name])
         self.assertEqual(events[0].kind, 'waiting')
+        self.assertEqual(stop.last_wait, 60)
