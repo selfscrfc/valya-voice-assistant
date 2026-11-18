@@ -54,11 +54,13 @@ class Assistant:
         if "id" in message:
             request_id = str(message["id"])
             if method in ("item/commandExecution/requestApproval", "item/fileChange/requestApproval",
-                          "item/tool/requestUserInput"):
+                          "item/tool/requestUserInput", "mcpServer/elicitation/request"):
                 if not self.interactive:
                     self.emit("input_unavailable", "Для ответа на запрос используйте интерактивный режим", method=method)
                     if method.endswith("/requestApproval"):
                         self.spawn_reply(message["id"], {"decision": "decline"})
+                    elif method == "mcpServer/elicitation/request":
+                        self.spawn_reply(message["id"], {"action": "decline"})
                     else:
                         self.spawn_reply(message["id"], {"answers": {}})
                     return
@@ -70,6 +72,7 @@ class Assistant:
             return
         if method == "serverRequest/resolved":
             self.requests.pop(str(params.get("requestId")), None)
+            self.emit("requests_changed", "")
             return
         if method == "wchat/disconnected":
             self.halted = True
@@ -88,13 +91,13 @@ class Assistant:
             self.messages[item_id] = self.messages.get(item_id, "") + delta
             if self.first_delta is None:
                 self.first_delta = time.monotonic() - self.started_at
-            self.emit("delta", delta, job=self.current)
+            self.emit("delta", delta, job=self.current, response="\n\n".join(self.messages.values()))
         elif method == "item/completed" and params.get("item", {}).get("type") == "agentMessage":
             item = params["item"]
             previous = self.messages.get(item["id"], "")
             self.messages[item["id"]] = item["text"]
             if not previous:
-                self.emit("delta", item["text"], job=self.current)
+                self.emit("delta", item["text"], job=self.current, response="\n\n".join(self.messages.values()))
             self.store.update(self.current, response="\n\n".join(self.messages.values()))
         elif method == "turn/completed":
             if self.completion and not self.completion.done():
@@ -151,9 +154,14 @@ class Assistant:
                 self.completion = asyncio.get_running_loop().create_future()
                 self.started_at = time.monotonic()
                 self.emit("started", job["prompt"], job=job_id, session=job["session"], thread=self.current_thread)
+                context = self.store.setting("common_context").strip()
+                prompt = job["prompt"]
+                if context:
+                    prompt = ("Общий контекст пользователя (пути и описание проектов, актуальная версия):\n"
+                              + context + "\n\nТекущее поручение пользователя:\n" + prompt)
                 result = await self.codex.call("turn/start", {
                     "threadId": self.current_thread,
-                    "input": [{"type": "text", "text": job["prompt"]}],
+                    "input": [{"type": "text", "text": prompt}],
                     "effort": "low",
                 })
                 self.current_turn = result["turn"]["id"]
@@ -184,6 +192,7 @@ class Assistant:
                         pass
             finally:
                 self.requests.clear()
+                self.emit("requests_changed", "")
                 self.current = self.current_thread = self.current_turn = None
                 self.completion = None
                 if not self.waiters[job_id].done():
@@ -216,7 +225,7 @@ class Assistant:
             return
         command, *args = parts
         if command == "/new" and len(args) in (1, 2):
-            cwd = args[1] if len(args) == 2 else self.store.session(self.store.active)["cwd"]
+            cwd = args[1] if len(args) == 2 else self.store.default_cwd
             self.store.create(args[0], cwd)
             self.emit("session", args[0], cwd=str(cwd))
         elif command == "/use" and len(args) == 1:
@@ -234,6 +243,13 @@ class Assistant:
             await self.cancel()
         elif command == "/clear" and not args:
             self.clear_queue()
+        elif command == "/elicit" and len(args) in (2, 3):
+            from .ui import UIProtocol
+            request = self.requests.get(args[0])
+            if not request or request["method"] != "mcpServer/elicitation/request":
+                raise ValueError("Нет такого запроса разрешения")
+            await UIProtocol(self).handle({"action": "reply", "request": args[0], "decision": args[1],
+                                           "content": json.loads(args[2]) if len(args) == 3 else {}})
         elif command == "/approve" and len(args) == 2:
             request = self.requests.get(args[0])
             if not request or not request["method"].endswith("/requestApproval") or args[1] not in ("yes", "no"):
@@ -253,7 +269,7 @@ class Assistant:
                 self.requests.pop(args[0], None)
         else:
             raise ValueError("Команды: /new ИМЯ [ПАПКА], /use ИМЯ, /sessions, /history, /queue, "
-                             "/cancel, /clear, /approve ID yes|no, /answer ID ВОПРОС ОТВЕТ, /quit")
+                             "/cancel, /clear, /elicit ID accept|decline|cancel [JSON], /approve ID yes|no, /answer ID ВОПРОС ОТВЕТ, /quit")
 
     async def close(self):
         if self.current_turn and not self.codex.closed:

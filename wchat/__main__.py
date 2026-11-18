@@ -9,6 +9,7 @@ import threading
 
 from .app import Assistant
 from .store import Store
+from .ui import UIProtocol
 from .voice import VoiceEvent, devices, listen
 
 
@@ -27,16 +28,19 @@ def parser():
     p.add_argument("--wake-word", default="чат")
     p.add_argument("--transcribe-only", action="store_true", help="Проверять активацию локально, без Codex")
     p.add_argument("--data-dir", type=Path, default=ROOT)
-    p.add_argument("--cwd", type=Path, default=Path.cwd(), help="Папка для нового диалога")
+    p.add_argument("--cwd", type=Path, help="Папка для нового диалога; по умолчанию ~/Documents/jack")
     p.add_argument("--session", help="Создать или выбрать именованный диалог")
     p.add_argument("--model", help="Модель Codex; по умолчанию настройка установленного CLI")
     p.add_argument("--codex", default="codex", help=argparse.SUPPRESS)
     p.add_argument("--turn-timeout", type=float, default=600)
+    p.add_argument("--ui", action="store_true", help="JSON-протокол графического клиента")
     p.add_argument("--json", action="store_true", help="Выводить события JSONL")
     return p
 
 
 async def main(args):
+    if args.ui:
+        args.json = True
     def emit(kind, text, **details):
         if args.json:
             print(json.dumps({"kind": kind, "text": text, **details}, ensure_ascii=False), flush=True)
@@ -63,6 +67,7 @@ async def main(args):
     store = Store(args.data_dir)
     assistant = Assistant(store, emit, executable=args.codex, model=args.model, turn_timeout=args.turn_timeout,
                           interactive=args.once is None and args.wav is None)
+    ui = UIProtocol(assistant)
     stop_audio = threading.Event()
     voice_thread = None
     reader_transport = None
@@ -75,10 +80,10 @@ async def main(args):
     submitted = []
     try:
         if not store.sessions():
-            store.create(args.session or "default", args.cwd)
+            store.create(args.session or "default", args.cwd or store.default_cwd)
         elif args.session:
             if args.session not in {s["name"] for s in store.sessions()}:
-                store.create(args.session, args.cwd)
+                store.create(args.session, args.cwd or store.default_cwd)
             else:
                 store.select(args.session)
         emit("session", store.active, cwd=store.session(store.active)["cwd"])
@@ -87,6 +92,8 @@ async def main(args):
                 emit("review", "Проверьте прежнее поручение перед повтором", job=job["id"], status=job["status"])
         if not args.transcribe_only:
             await assistant.start()
+        if args.ui:
+            ui.snapshot()
         if args.once is not None:
             job = assistant.enqueue(args.once)
             result = await assistant.waiters[job]
@@ -97,7 +104,7 @@ async def main(args):
 
         async def input_loop():
             nonlocal reader_transport
-            reader = asyncio.StreamReader()
+            reader = asyncio.StreamReader(limit=1024 * 1024)
             protocol = asyncio.StreamReaderProtocol(reader)
             try:
                 reader_transport, _ = await loop.connect_read_pipe(lambda: protocol, sys.stdin)
@@ -115,17 +122,25 @@ async def main(args):
                     exit_requested.set()
                     return
                 try:
-                    if args.transcribe_only:
+                    if args.ui:
+                        action = json.loads(text)
+                        if isinstance(action, dict) and action.get("action") == "quit":
+                            exit_requested.set()
+                            return
+                        await ui.handle(action)
+                    elif args.transcribe_only:
                         emit("status", "Локальная проверка: /quit для выхода")
                     elif text.startswith("/"):
                         await assistant.command(text)
                     else:
                         assistant.enqueue(text)
-                except (ValueError, RuntimeError) as exc:
+                except (ValueError, RuntimeError, TypeError, KeyError) as exc:
                     emit("error", str(exc))
             # In voice mode the closed terminal input must not disable listening.
             assistant.interactive = False
-            if not voice_enabled:
+            if args.ui:
+                exit_requested.set()
+            elif not voice_enabled:
                 await assistant.queue.join()
                 exit_requested.set()
 
@@ -161,14 +176,18 @@ async def main(args):
                         else:
                             try:
                                 submitted.append(assistant.enqueue(event.text, "voice", captured_session))
-                            except (ValueError, RuntimeError) as exc:
+                            except (ValueError, RuntimeError, TypeError, KeyError) as exc:
                                 emit("error", str(exc))
                     captured_session = None
                 elif event.kind == "error":
                     voice_error = True
                 elif event.kind == "end":
-                    await assistant.queue.join()
-                    exit_requested.set()
+                    if args.ui and not args.wav:
+                        # A disconnected microphone must not take the written chat down.
+                        await exit_requested.wait()
+                    else:
+                        await assistant.queue.join()
+                        exit_requested.set()
         else:
             await exit_requested.wait()
         return 1 if voice_error or any(store.job(j)["status"] != "completed" for j in submitted) else 0

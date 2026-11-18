@@ -10,6 +10,8 @@ lock = threading.Lock()
 cancel = threading.Event()
 turn_counter = 0
 threads = 0
+permission_answer = threading.Event()
+permission_result = {}
 
 
 def send(*messages):
@@ -27,6 +29,18 @@ def generate(thread_id, turn_id, prompt):
     if prompt == "CRASH":
         time.sleep(.05)
         os._exit(2)
+    if prompt == "PERMISSION_TEST":
+        permission_answer.clear()
+        send({"id": "test-permission", "method": "mcpServer/elicitation/request", "params": {
+            "threadId": thread_id, "serverName": "test", "mode": "form",
+            "message": "Тестовая форма. Никакие приложения или файлы не изменяются.",
+            "requestedSchema": {"type": "object", "properties": {
+                "allow": {"type": "boolean", "title": "Разрешить тестовое действие?"}}, "required": ["allow"]}}})
+        while not permission_answer.wait(.01):
+            if cancel.is_set():
+                send(event("turn/completed", {"threadId": thread_id, "turn": {"id": turn_id, "status": "interrupted"}}))
+                return
+        prompt = "permission:" + permission_result.get("action", "unknown")
     for _ in range(100 if prompt == "WAIT" else 4):
         if cancel.wait(.01):
             send(event("turn/completed", {"threadId": thread_id, "turn": {"id": turn_id, "status": "interrupted"}}))
@@ -43,6 +57,10 @@ def generate(thread_id, turn_id, prompt):
 for line in sys.stdin:
     request = json.loads(line)
     method, params, request_id = request.get("method"), request.get("params", {}), request.get("id")
+    if request_id == "test-permission" and not method:
+        permission_result = request.get("result", {})
+        permission_answer.set()
+        continue
     if request_id is None or not method:
         continue
     result = {}

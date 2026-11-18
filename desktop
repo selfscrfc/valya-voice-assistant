@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ ! -x "$ROOT/build/Wchat.app/Contents/MacOS/Wchat" ] || [ "$ROOT/native/Wchat.swift" -nt "$ROOT/build/Wchat.app/Contents/MacOS/Wchat" ] || [ "$ROOT/scripts/build_desktop.py" -nt "$ROOT/build/Wchat.app/Contents/MacOS/Wchat" ]; then
+    "$ROOT/.venv/bin/python" "$ROOT/scripts/build_desktop.py"
+fi
+open "$ROOT/build/Wchat.app" --args "$@"

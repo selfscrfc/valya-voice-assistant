@@ -107,6 +107,15 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
         self.app.codex.reply.assert_awaited_once_with("q1", {"answers": {
             "first": {"answers": ["one"]}, "second": {"answers": ["two words"]}}})
 
+    async def test_mcp_permission_waits_for_explicit_response(self):
+        self.app.codex.reply = AsyncMock()
+        self.app.on_event({"id": "mcp-1", "method": "mcpServer/elicitation/request",
+                           "params": {"mode": "form", "message": "Allow Clock?",
+                                      "requestedSchema": {"type": "object", "properties": {}}}})
+        await asyncio.sleep(0)
+        self.assertIn("mcp-1", self.app.requests)
+        self.app.codex.reply.assert_not_awaited()
+
     async def test_noninteractive_permissions_are_declined(self):
         self.app.interactive = False
         self.app.codex.reply = AsyncMock()
@@ -120,7 +129,7 @@ class CLITests(unittest.TestCase):
     def test_text_mode_explicitly_reports_that_microphone_is_off(self):
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run([sys.executable, "-m", "wchat", "--text", "--codex", FAKE,
-                                     "--data-dir", directory, "--json"],
+                                     "--data-dir", directory, "--cwd", directory, "--json"],
                                     input="/quit\n", capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
             events = [json.loads(line) for line in result.stdout.splitlines()]
@@ -143,10 +152,25 @@ class CLITests(unittest.TestCase):
             finally:
                 with_store.close()
 
+    def test_default_folder_is_documents_jack(self):
+        with tempfile.TemporaryDirectory() as directory:
+            expected = Path(directory) / "Documents/jack"
+            expected.mkdir(parents=True)
+            result = subprocess.run([sys.executable, "-m", "wchat", "--once", "entry",
+                                     "--codex", FAKE, "--data-dir", str(Path(directory) / "state")],
+                                    env={**os.environ, "HOME": directory},
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            store = Store(Path(directory) / "state")
+            try:
+                self.assertEqual(store.session("default")["cwd"], str(expected.resolve()))
+            finally:
+                store.close()
+
     def test_api_key_auth_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run([sys.executable, "-m", "wchat", "--once", "entry",
-                                     "--codex", FAKE, "--data-dir", directory],
+                                     "--codex", FAKE, "--data-dir", directory, "--cwd", directory],
                                     env={**os.environ, "WCHAT_TEST_AUTH": "apiKey"},
                                     capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 1)

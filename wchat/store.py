@@ -71,6 +71,24 @@ class Store:
     def sessions(self):
         return [dict(r) for r in self.db.execute("SELECT * FROM sessions ORDER BY name")]
 
+    def setting(self, key, default=""):
+        row = self.db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row[0] if row else default
+
+    @property
+    def default_cwd(self):
+        return self.setting("default_cwd", str(Path.home() / "Documents/jack"))
+
+    def save_context(self, context, cwd):
+        if not isinstance(context, str) or len(context) > 64000:
+            raise ValueError("Общий контекст: не более 64000 символов")
+        path = Path(cwd).expanduser().resolve()
+        if not path.is_dir():
+            raise ValueError(f"Нет рабочей папки: {path}")
+        with self.db:
+            self.db.executemany("INSERT OR REPLACE INTO settings VALUES (?,?)",
+                                [("common_context", context), ("default_cwd", str(path))])
+
     def thread(self, name, thread_id):
         self.db.execute("UPDATE sessions SET thread_id=? WHERE name=?", (thread_id, name))
         self.db.commit()

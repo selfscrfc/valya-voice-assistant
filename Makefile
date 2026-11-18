@@ -11,3 +11,10 @@ test:
 
 run:
 	./run
+
+.PHONY: desktop build-desktop
+build-desktop:
+	.venv/bin/python scripts/build_desktop.py
+
+desktop:
+	./desktop
