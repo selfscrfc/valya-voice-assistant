@@ -1,0 +1,34 @@
+{
+  "threadId": "fixture-thread",
+  "turnId": "fixture-turn",
+  "serverName": "cua_repl",
+  "mode": "form",
+  "_meta": {
+    "callId": "fixture-call",
+    "codex_approval_kind": "mcp_tool_call",
+    "connector_id": "computer-use",
+    "connector_name": "Computer Use",
+    "persist": [
+      "session",
+      "always"
+    ],
+    "x-codex-turn-metadata": {},
+    "riskLevel": "low",
+    "tool_name": "get_app_state",
+    "tool_params": {
+      "app": "com.apple.clock"
+    },
+    "tool_params_display": [
+      {
+        "display_name": "App",
+        "name": "app",
+        "value": "Clock"
+      }
+    ]
+  },
+  "message": "Allow Computer Use to use \"Clock\"?",
+  "requestedSchema": {
+    "type": "object",
+    "properties": {}
+  }
+}

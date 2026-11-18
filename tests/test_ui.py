@@ -76,6 +76,18 @@ class UITests(unittest.IsolatedAsyncioTestCase):
         await self.ui.handle({'action': 'reply', 'request': 'permission', 'decision': 'decline'})
         self.app.codex.reply.assert_awaited_once_with('permission', {'action': 'decline'})
 
+    async def test_clock_access_empty_form_and_cancellation(self):
+        params = json.loads((ROOT / 'tests/fixtures/clock-permission.json').read_text())
+        self.app.codex.reply = AsyncMock()
+        for decision in ('accept', 'decline', 'cancel'):
+            self.app.on_event({'id': 'clock', 'method': 'mcpServer/elicitation/request', 'params': params})
+            await self.ui.handle({'action': 'reply', 'request': 'clock', 'decision': decision, 'content': {}})
+            expected = {'action': decision}
+            if decision == 'accept':
+                expected['content'] = {}
+            self.app.codex.reply.assert_awaited_with('clock', expected)
+            self.assertFalse(self.app.requests)
+
     async def test_noninteractive_mcp_declines(self):
         self.app.interactive = False
         self.app.codex.reply = AsyncMock()

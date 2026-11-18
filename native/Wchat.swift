@@ -34,7 +34,7 @@ struct Hairline: View {
     var body: some View { Rectangle().fill(Ink.line.opacity(0.65)).frame(height: 1) }
 }
 
-struct Job: Identifiable, Decodable {
+struct Job: Identifiable, Decodable, Equatable {
     let id: Int
     let session: String
     let prompt: String
@@ -147,13 +147,20 @@ struct Permission: Identifiable {
         guard let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let kind = event["kind"] as? String else { return }
         let text = event["text"] as? String ?? ""
+        var transcriptChanged = false
         switch kind {
         case "snapshot":
             if let raw = event["jobs"], let data = try? JSONSerialization.data(withJSONObject: raw),
-               let value = try? JSONDecoder().decode([Job].self, from: data) { jobs = value }
+               let value = try? JSONDecoder().decode([Job].self, from: data), value != jobs {
+                jobs = value
+                transcriptChanged = true
+            }
             if let raw = event["sessions"], let data = try? JSONSerialization.data(withJSONObject: raw),
                let value = try? JSONDecoder().decode([Conversation].self, from: data) { sessions = value }
-            active = event["active"] as? String ?? active
+            if let name = event["active"] as? String, name != active {
+                active = name
+                transcriptChanged = true
+            }
             commonContext = event["context"] as? String ?? ""
             defaultCwd = event["default_cwd"] as? String ?? defaultCwd
             permissions = (event["requests"] as? [String: [String: Any]] ?? [:]).sorted { $0.key < $1.key }.map {
@@ -165,7 +172,11 @@ struct Permission: Identifiable {
         case "connected": connected = true; connection = "Codex подключён"
         case "delta":
             if let id = event["job"] as? Int, let index = jobs.firstIndex(where: { $0.id == id }) {
-                jobs[index].response = event["response"] as? String ?? jobs[index].response + text
+                let response = event["response"] as? String ?? jobs[index].response + text
+                if jobs[index].response != response {
+                    jobs[index].response = response
+                    transcriptChanged = true
+                }
             }
         case "queued", "started", "finished", "requests_changed", "approval", "session":
             send(["action": "snapshot"])
@@ -177,7 +188,7 @@ struct Permission: Identifiable {
         case "error": error = text; send(["action": "snapshot"])
         default: break
         }
-        revision += 1
+        if transcriptChanged { revision += 1 }
     }
     func stop() {
         guard process.isRunning else { onExit?(); return }
@@ -450,6 +461,8 @@ struct ChatView: View {
     @State private var showNew = false
     @State private var showContext = false
     @State private var inputFocused = false
+    @State private var historyLimit = 100
+    var conversationJobs: [Job] { model.jobs.filter { $0.session == model.active } }
     var canSend: Bool { model.connected && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     func submit() {
         guard canSend else { return }
@@ -547,7 +560,12 @@ struct ChatView: View {
                 }
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
+                        // Eager, bounded layout avoids estimating changing rows while scrolling.
+                        VStack(alignment: .leading, spacing: 0) {
+                            if conversationJobs.count > historyLimit {
+                                Button("Показать предыдущие сообщения") { historyLimit += 100 }
+                                    .buttonStyle(QuietButton()).padding(.vertical, 12)
+                            }
                             if model.jobs.filter({ $0.session == model.active }).isEmpty {
                                 VStack(alignment: .leading, spacing: 12) {
                                     Text("Пока нет сообщений").font(.system(size: 22)).foregroundStyle(Ink.cream)
@@ -559,15 +577,31 @@ struct ChatView: View {
                                         .font(.system(size: 12)).foregroundStyle(Ink.muted)
                                 }.frame(maxWidth: 440, alignment: .leading).padding(.vertical, 65)
                             }
-                            ForEach(model.jobs.filter { $0.session == model.active }) { job in TurnView(job: job) }
-                            ForEach(model.permissions) { permission in PermissionCard(permission: permission, model: model).padding(.vertical, 20) }
+                            ForEach(Array(conversationJobs.suffix(historyLimit))) { job in TurnView(job: job) }
                             Color.clear.frame(height: 1).id("bottom")
                         }.padding(.horizontal, 30).padding(.bottom, 12).frame(maxWidth: .infinity, alignment: .leading)
-                    }.onChange(of: model.revision) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
+                    }.task(id: model.revision) {
+                        // Let the current layout transaction settle; collapse streaming bursts.
+                        do { try await Task.sleep(for: .milliseconds(60)) } catch { return }
+                        guard !Task.isCancelled else { return }
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }
+                }
+                if !model.permissions.isEmpty {
+                    Hairline()
+                    ScrollView {
+                        VStack(spacing: 12) {
+                            ForEach(model.permissions) { permission in
+                                PermissionCard(permission: permission, model: model)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }.padding(.horizontal, 30).padding(.vertical, 12)
+                    }.frame(height: 230)
+                        .accessibilityLabel("Запросы разрешений")
                 }
                 composer
             }.background(Ink.canvas)
-        }.foregroundStyle(Ink.text).frame(minWidth: 800, minHeight: 560)
+        }.foregroundStyle(Ink.text).frame(maxWidth: .infinity, maxHeight: .infinity)
         .alert("Новый диалог", isPresented: $showNew) {
             TextField("Имя диалога", text: $newName)
             Button("Создать") { model.send(["action": "new", "name": newName]); newName = "" }
@@ -643,7 +677,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.titlebarAppearsTransparent = true
         window.backgroundColor = Ink.native(0x181915)
         window.appearance = NSAppearance(named: .darkAqua)
-        window.contentView = NSHostingView(rootView: ChatView(model: model).tint(Ink.cream).preferredColorScheme(.dark))
+        let hosting = NSHostingView(rootView: ChatView(model: model).tint(Ink.cream).preferredColorScheme(.dark))
+        // AppKit owns window geometry. Content changes must not renegotiate its bounds.
+        hosting.sizingOptions = []
+        window.contentMinSize = NSSize(width: 800, height: 560)
+        window.contentView = hosting
         window.center(); window.makeKeyAndOrderFront(nil)
         let menu = NSMenu(); let item = NSMenuItem(); menu.addItem(item)
         let appMenu = NSMenu(); appMenu.addItem(withTitle: "Завершить wchat", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -663,6 +701,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+#if !WCHAT_TEST
 @main struct WchatMain {
     static func main() {
         let app = NSApplication.shared
@@ -670,3 +709,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         app.delegate = delegate; app.setActivationPolicy(.regular); app.run()
     }
 }
+
+#endif

@@ -18,3 +18,7 @@ build-desktop:
 
 desktop:
 	./desktop
+
+.PHONY: test-native
+test-native:
+	.venv/bin/python scripts/test_native.py

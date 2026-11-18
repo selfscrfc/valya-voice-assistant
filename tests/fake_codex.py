@@ -2,6 +2,7 @@
 """Protocol fixture, never used by the application outside tests."""
 import json
 import os
+from pathlib import Path
 import sys
 import threading
 import time
@@ -29,13 +30,21 @@ def generate(thread_id, turn_id, prompt):
     if prompt == "CRASH":
         time.sleep(.05)
         os._exit(2)
-    if prompt == "PERMISSION_TEST":
+    if prompt in ("PERMISSION_TEST", "CLOCK_PERMISSION_TEST", "поставь будильник на завтра на четырнадцать"):
         permission_answer.clear()
-        send({"id": "test-permission", "method": "mcpServer/elicitation/request", "params": {
+        params = {
             "threadId": thread_id, "serverName": "test", "mode": "form",
             "message": "Тестовая форма. Никакие приложения или файлы не изменяются.",
             "requestedSchema": {"type": "object", "properties": {
-                "allow": {"type": "boolean", "title": "Разрешить тестовое действие?"}}, "required": ["allow"]}}})
+                "allow": {"type": "boolean", "title": "Разрешить тестовое действие?"}}, "required": ["allow"]}}
+        if prompt != "PERMISSION_TEST":
+            time.sleep(4)
+            params = json.loads((Path(__file__).parent / 'fixtures/clock-permission.json').read_text())
+            params["threadId"] = thread_id
+            send(event("item/agentMessage/delta", {"threadId": thread_id, "turnId": turn_id,
+                    "itemId": "intro", "delta": "I’ll check whether this workspace can set the alarm."}))
+            time.sleep(5)
+        send({"id": "test-permission", "method": "mcpServer/elicitation/request", "params": params})
         while not permission_answer.wait(.01):
             if cancel.is_set():
                 send(event("turn/completed", {"threadId": thread_id, "turn": {"id": turn_id, "status": "interrupted"}}))
