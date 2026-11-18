@@ -17,6 +17,17 @@ class AudioTests(unittest.TestCase):
         listen(MODEL, events.append, threading.Event(), wav_path=path)
         return events
 
+    def test_playback_cannot_trigger_a_command(self):
+        muted = threading.Event()
+        muted.set()
+        events = []
+        listen(MODEL, events.append, threading.Event(), wav_path=FIXTURES / "command.wav", playback=muted)
+        self.assertFalse(any(e.kind in ("wake", "prompt") for e in events))
+        muted.clear()
+        events.clear()
+        listen(MODEL, events.append, threading.Event(), wav_path=FIXTURES / "command.wav", playback=muted)
+        self.assertTrue(any(e.kind == "prompt" for e in events))
+
     def test_continuous_phrase(self):
         events = self.recognize(FIXTURES / "command.wav")
         self.assertEqual([e.text for e in events if e.kind == "prompt"], ["сколько будет два плюс два"])

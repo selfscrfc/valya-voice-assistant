@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from wchat.app import Assistant
 from wchat.store import Store
@@ -27,6 +27,54 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
         await self.app.close()
         self.store.close()
         self.tmp.cleanup()
+
+    async def test_sound_suffix_plays_once_for_voice_and_text(self):
+        self.app.speaker.speak = AsyncMock()
+        with patch.object(self.app.codex, "call", wraps=self.app.codex.call) as call:
+            for source in ("voice", "text"):
+                result = await self.app.waiters[self.app.enqueue("Проверка, ЗВУК!", source)]
+                self.assertEqual(result["status"], "completed")
+                self.assertEqual(result["prompt"], "Проверка, ЗВУК!")
+                self.assertEqual(result["response"], "reply:Проверка")
+            prompts = [c.args[1]["input"][0]["text"] for c in call.call_args_list if c.args[0] == "turn/start"]
+            self.assertTrue(all(p.startswith("Проверка\n\n[Response format") for p in prompts))
+        self.assertEqual(self.app.speaker.speak.await_count, 2)
+        self.app.speaker.speak.assert_awaited_with("reply:Проверка")
+        self.assertEqual(sum(k == "speech_finished" for k, _, _ in self.events), 2)
+
+    async def test_plain_request_and_middle_word_stay_silent(self):
+        self.app.speaker.speak = AsyncMock()
+        for prompt in ("hello", "сделай звук тише", "ультразвук"):
+            await self.app.waiters[self.app.enqueue(prompt)]
+        self.app.speaker.speak.assert_not_awaited()
+        with self.assertRaises(ValueError): self.app.enqueue("звук!")
+
+    async def test_speech_failure_preserves_completed_task_and_queue(self):
+        self.app.speaker.speak = AsyncMock(side_effect=RuntimeError("fixture audio failure"))
+        result = await self.app.waiters[self.app.enqueue("hello звук")]
+        self.assertEqual(result["status"], "completed")
+        self.assertFalse(self.app.halted)
+        self.assertTrue(any(k == "speech_error" for k, _, _ in self.events))
+        result = await self.app.waiters[self.app.enqueue("next")]
+        self.assertEqual(result["response"], "reply:next")
+
+    async def test_failed_request_speaks_failure_not_success(self):
+        self.app.speaker.speak = AsyncMock()
+        result = await self.app.waiters[self.app.enqueue("FAIL звук")]
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("Не удалось", self.app.speaker.speak.await_args.args[0])
+
+    async def test_close_during_speech_preserves_completed_result(self):
+        entered = asyncio.Event()
+        async def speak(text):
+            entered.set()
+            await asyncio.Event().wait()
+        self.app.speaker.speak = speak
+        job = self.app.enqueue("hello звук")
+        await asyncio.wait_for(entered.wait(), 3)
+        await self.app.close()
+        self.assertEqual(self.store.job(job)["status"], "completed")
+        self.assertEqual(self.store.job(job)["response"], "reply:hello")
 
     async def test_serial_queue_routes_to_captured_session(self):
         first = self.app.enqueue("first")

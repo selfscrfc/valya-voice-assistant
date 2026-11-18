@@ -27,6 +27,7 @@ def event(method, params):
 
 
 def generate(thread_id, turn_id, prompt):
+    prompt = prompt.split("\n\n[Response format for this request only:")[0]
     if prompt == "CRASH":
         time.sleep(.05)
         os._exit(2)

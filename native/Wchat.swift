@@ -64,6 +64,7 @@ struct Permission: Identifiable {
     private var microphoneName = ""
     @Published var error: String?
     @Published var connected = false
+    @Published var speaking = false
     @Published var revision = 0
     @Published var commonContext = ""
     @Published var defaultCwd = NSHomeDirectory() + "/Documents/jack"
@@ -73,7 +74,7 @@ struct Permission: Identifiable {
     private var output: Pipe?
     private var stderr: FileHandle?
     var onExit: (() -> Void)?
-    var busy: Bool { jobs.contains { ["queued", "starting", "running"].contains($0.status) } }
+    var busy: Bool { speaking || jobs.contains { ["queued", "starting", "running"].contains($0.status) } }
     var cwd: String { sessions.first { $0.name == active }?.cwd ?? "" }
 
     func start() {
@@ -113,6 +114,7 @@ struct Permission: Identifiable {
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.connected = false
+                    self.speaking = false
                     self.connection = "Stopped"
                     self.microphone = "Microphone off"
                     if process.terminationStatus != 0 && self.error == nil {
@@ -169,6 +171,9 @@ struct Permission: Identifiable {
                            params: $0.value["params"] as? [String: Any] ?? [:])
             }
             if event["halted"] as? Bool == true { connected = false; connection = "Restart required" }
+        case "speech_started": speaking = true
+        case "speech_finished": speaking = false
+        case "speech_error": speaking = false; error = "Speech playback: " + text
         case "context_saved": contextSaved += 1
         case "connected": connected = true; connection = "Codex connected"
         case "delta":
@@ -511,7 +516,7 @@ struct ChatView: View {
                 .font(.system(size: 11)).foregroundStyle(Ink.muted)
                 .lineLimit(1).truncationMode(.middle).help(model.cwd)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Label(model.microphone, systemImage: model.microphone.contains("off") ? "mic.slash" : "mic")
+            Label(model.speaking ? "Speaking · microphone paused" : model.microphone, systemImage: model.microphone.contains("off") ? "mic.slash" : "mic")
                 .font(.system(size: 11)).foregroundStyle(Ink.muted)
                 .lineLimit(1).truncationMode(.middle).frame(maxWidth: 220, alignment: .trailing)
                 .help(model.microphone + " • Wake word: чат")

@@ -33,6 +33,13 @@ import Foundation
         try receive(["kind": "delta", "job": 1, "text": "more", "response": "Checking access…more"])
         check(model.revision == initial + 1, "new reply text must request one transcript update")
         check(model.jobs[0].response.hasSuffix("more"), "streamed reply must be retained")
+        model.jobs = []
+        try receive(["kind": "speech_started", "text": "Short reply"])
+        check(model.speaking && model.busy, "playback must expose the Stop control")
+        try receive(["kind": "speech_finished", "text": ""])
+        check(!model.speaking && !model.busy, "playback completion must clear the Stop control")
+        try receive(["kind": "speech_error", "text": "test"])
+        check(model.error == "Speech playback: test", "playback errors must be visible")
         print("Native regression checks passed")
     }
 }

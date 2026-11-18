@@ -151,7 +151,8 @@ async def main(args):
             def audio_worker():
                 try:
                     listen(args.voice_model, lambda event: loop.call_soon_threadsafe(voice_events.put_nowait, event),
-                           stop_audio, device=args.device, wav_path=args.wav, wake_word=args.wake_word)
+                           stop_audio, device=args.device, wav_path=args.wav, wake_word=args.wake_word,
+                           playback=assistant.speaker.muted)
                 except Exception as exc:
                     loop.call_soon_threadsafe(voice_events.put_nowait, VoiceEvent("error", str(exc)))
                 finally:
@@ -163,6 +164,9 @@ async def main(args):
                 try:
                     event = await asyncio.wait_for(voice_events.get(), .2)
                 except asyncio.TimeoutError:
+                    continue
+                if assistant.speaker.muted.is_set() and event.kind in ("wake", "prompt", "discard"):
+                    captured_session = None
                     continue
                 emit("voice_" + event.kind, event.text)
                 if event.kind == "wake":

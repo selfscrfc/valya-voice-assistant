@@ -197,7 +197,7 @@ def capture_microphone(sd, feed, reset, emit, stop, requested=None, inventory=No
             refresh = True
 
 
-def listen(model_path, emit, stop, device=None, wav_path=None, wake_word="чат"):
+def listen(model_path, emit, stop, device=None, wav_path=None, wake_word="чат", playback=None):
     """Blocking audio worker. Audio stays local; the caller receives only commands."""
     import vosk
     vosk.SetLogLevel(-1)
@@ -207,6 +207,10 @@ def listen(model_path, emit, stop, device=None, wav_path=None, wake_word="чат
     recognizer = vosk.KaldiRecognizer(model, rate)
 
     def feed(data, now):
+        if playback is not None and playback.is_set():
+            gate.reset()
+            recognizer.Reset()
+            return
         final = recognizer.AcceptWaveform(data)
         result = json.loads(recognizer.Result() if final else recognizer.PartialResult())
         for event in gate.feed(result.get("text" if final else "partial", ""), final, now):

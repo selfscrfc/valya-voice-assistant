@@ -4,6 +4,7 @@ import shlex
 import time
 
 from .rpc import Codex, RPCError
+from .speech import SpeechPlayer, split_speech_request, spoken_summary, SPEECH_INSTRUCTION
 
 
 class Assistant:
@@ -27,6 +28,8 @@ class Assistant:
         self.first_delta = None
         self.cancel_requested = False
         self.interactive = interactive
+        self.speaker = SpeechPlayer()
+        self.final_message = ""
 
     async def start(self):
         await self.codex.start(self.store.directory / "codex.log")
@@ -36,6 +39,7 @@ class Assistant:
     def enqueue(self, prompt, source="text", session=None):
         if self.halted:
             raise RuntimeError("Connection needs recovery. Restart the client; tasks are not retried automatically.")
+        split_speech_request(prompt)  # Reject an empty speech-only request before queuing.
         name = session or self.store.active
         job_id = self.store.enqueue(name, prompt, source)
         self.waiters[job_id] = asyncio.get_running_loop().create_future()
@@ -94,6 +98,8 @@ class Assistant:
             self.emit("delta", delta, job=self.current, response="\n\n".join(self.messages.values()))
         elif method == "item/completed" and params.get("item", {}).get("type") == "agentMessage":
             item = params["item"]
+            if item.get("phase") != "commentary":
+                self.final_message = item["text"]
             previous = self.messages.get(item["id"], "")
             self.messages[item["id"]] = item["text"]
             if not previous:
@@ -141,6 +147,7 @@ class Assistant:
             self.current = job_id
             self.current_turn = self.current_thread = None
             self.messages = {}
+            self.final_message = ""
             self.first_delta = None
             self.cancel_requested = False
             self.completion = None
@@ -155,7 +162,9 @@ class Assistant:
                 self.started_at = time.monotonic()
                 self.emit("started", job["prompt"], job=job_id, session=job["session"], thread=self.current_thread)
                 context = self.store.setting("common_context").strip()
-                prompt = job["prompt"]
+                prompt, speak = split_speech_request(job["prompt"])
+                if speak:
+                    prompt += SPEECH_INSTRUCTION
                 if context:
                     prompt = ("Общий контекст пользователя (пути и описание проектов, актуальная версия):\n"
                               + context + "\n\nТекущее поручение пользователя:\n" + prompt)
@@ -176,9 +185,26 @@ class Assistant:
                                   error=json.dumps(turn["error"], ensure_ascii=False) if turn.get("error") else None)
                 self.emit("finished", status, job=job_id, first_text_seconds=self.first_delta,
                           elapsed_seconds=round(time.monotonic() - self.started_at, 3))
+                self.current_turn = None
+                if speak and not self.cancel_requested and status in ("completed", "failed"):
+                    summary = spoken_summary(self.final_message)
+                    if status == "failed":
+                        summary = ("Не удалось выполнить поручение. Подробности ошибки в чате."
+                                   if any("а" <= c.lower() <= "я" for c in job["prompt"])
+                                   else "The request failed. Please check the error in chat.")
+                    if summary:
+                        self.emit("speech_started", summary, job=job_id)
+                        try:
+                            await self.speaker.speak(summary)
+                        except Exception as exc:
+                            # Playback errors must never change the task outcome or replay its actions.
+                            self.emit("speech_error", str(exc), job=job_id)
+                        finally:
+                            self.emit("speech_finished", "", job=job_id)
             except asyncio.CancelledError:
-                self.store.update(job_id, status="unknown", response="\n\n".join(self.messages.values()),
-                                  error="Client stopped; check the task outcome")
+                if self.store.job(job_id)["status"] not in ("completed", "failed", "interrupted"):
+                    self.store.update(job_id, status="unknown", response="\n\n".join(self.messages.values()),
+                                      error="Client stopped; check the task outcome")
                 raise
             except Exception as exc:
                 # If a request timed out, an action may already have happened.
@@ -202,6 +228,11 @@ class Assistant:
     async def cancel(self):
         if self.current is not None:
             self.cancel_requested = True
+        was_speaking = self.speaker.muted.is_set()
+        await self.speaker.stop()
+        if was_speaking:
+            self.emit("status", "Speech stopped")
+            return
         if self.current_turn and self.current_thread:
             await self.codex.call("turn/interrupt", {"threadId": self.current_thread,
                                                      "turnId": self.current_turn}, timeout=10)
@@ -272,6 +303,7 @@ class Assistant:
                              "/cancel, /clear, /elicit ID accept|decline|cancel [JSON], /approve ID yes|no, /answer ID QUESTION ANSWER, /quit")
 
     async def close(self):
+        await self.speaker.stop()
         if self.current_turn and not self.codex.closed:
             try:
                 await self.cancel()
