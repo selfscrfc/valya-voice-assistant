@@ -33,6 +33,10 @@ import Foundation
         try receive(["kind": "delta", "job": 1, "text": "more", "response": "Checking access…more"])
         check(model.revision == initial + 1, "new reply text must request one transcript update")
         check(model.jobs[0].response.hasSuffix("more"), "streamed reply must be retained")
+        try receive(["kind": "voice_transcribing", "text": "Transcribing with Whisper…"])
+        check(model.microphone == "Transcribing with Whisper…", "hybrid inference must be visible")
+        try receive(["kind": "voice_discard", "text": ""])
+        check(model.microphone.contains("Wireless Mic Rx"), "discarded transcription must restore device status")
         model.jobs = []
         try receive(["kind": "speech_started", "text": "Short reply"])
         check(model.speaking && model.busy, "playback must expose the Stop control")

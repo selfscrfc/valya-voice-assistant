@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import json
+import os
 from pathlib import Path
 import re
 import signal
@@ -8,6 +9,8 @@ import sys
 import threading
 
 from .app import Assistant
+from .energy import EnergyLog
+from .hybrid import DEFAULT_MODEL
 from .store import Store
 from .ui import UIProtocol
 from .voice import VoiceEvent, devices, listen
@@ -25,6 +28,10 @@ def parser():
     p.add_argument("--devices", action="store_true", help="List available microphones and exit")
     p.add_argument("--device", help="auto (default): DJI, otherwise built-in Mac; or ID/unique name")
     p.add_argument("--voice-model", type=Path, default=ROOT / "models/vosk-model-small-ru-0.22")
+    p.add_argument("--asr", choices=("hybrid", "vosk"), default="hybrid", help="hybrid: Vosk wake detection + Whisper commands")
+    p.add_argument("--whisper-model", type=Path, default=DEFAULT_MODEL)
+    p.add_argument("--no-energy-log", action="store_true", help="Disable local performance and battery logging")
+    p.add_argument("--energy-interval", type=float, default=60, help="Energy sample interval in seconds (minimum 10)")
     p.add_argument("--wake-word", default="чат")
     p.add_argument("--transcribe-only", action="store_true", help="Test wake detection locally, without Codex")
     p.add_argument("--data-dir", type=Path, default=ROOT)
@@ -70,6 +77,11 @@ async def main(args):
     assistant = Assistant(store, emit, executable=args.codex, model=args.model, turn_timeout=args.turn_timeout,
                           interactive=args.once is None and args.wav is None, approval_policy=args.approval_policy)
     ui = UIProtocol(assistant)
+    energy = None if args.no_energy_log else EnergyLog(
+        args.data_dir / "metrics", args.asr if voice_enabled else "text", args.energy_interval,
+        root_pid=int(os.environ.get("WCHAT_UI_PID", os.getpid())))
+    if energy:
+        energy.start()
     stop_audio = threading.Event()
     voice_thread = None
     reader_transport = None
@@ -154,7 +166,8 @@ async def main(args):
                 try:
                     listen(args.voice_model, lambda event: loop.call_soon_threadsafe(voice_events.put_nowait, event),
                            stop_audio, device=args.device, wav_path=args.wav, wake_word=args.wake_word,
-                           playback=assistant.speaker.muted)
+                           playback=assistant.speaker.muted, asr=args.asr, whisper_model=args.whisper_model,
+                           metric=energy.record if energy else lambda *a, **kw: None)
                 except Exception as exc:
                     loop.call_soon_threadsafe(voice_events.put_nowait, VoiceEvent("error", str(exc)))
                 finally:
@@ -167,7 +180,7 @@ async def main(args):
                     event = await asyncio.wait_for(voice_events.get(), .2)
                 except asyncio.TimeoutError:
                     continue
-                if assistant.speaker.muted.is_set() and event.kind in ("wake", "prompt", "discard"):
+                if assistant.speaker.muted.is_set() and event.kind in ("wake", "prompt"):
                     captured_session = None
                     continue
                 emit("voice_" + event.kind, event.text)
@@ -207,6 +220,8 @@ async def main(args):
         if voice_thread:
             await asyncio.to_thread(voice_thread.join, 3)
         await assistant.close()
+        if energy:
+            energy.close()
         store.close()
 
 

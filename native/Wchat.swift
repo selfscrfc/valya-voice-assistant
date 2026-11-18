@@ -103,6 +103,7 @@ struct Permission: Identifiable {
             process.currentDirectoryURL = URL(fileURLWithPath: root)
             var env = ProcessInfo.processInfo.environment
             env["PYTHONPATH"] = root
+            env["WCHAT_UI_PID"] = String(ProcessInfo.processInfo.processIdentifier)
             env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + (env["PATH"] ?? "/usr/bin:/bin")
             process.environment = env
             process.arguments = ["-m", "wchat", "--ui"] + args
@@ -186,11 +187,13 @@ struct Permission: Identifiable {
             }
         case "queued", "started", "finished", "requests_changed", "approval", "session":
             send(["action": "snapshot"])
+        case "voice_loading", "voice_transcribing": microphone = text
+        case "voice_transcription_error": error = "Transcription: " + text
         case "voice_ready": microphoneName = text; microphone = "Listening · " + text
         case "voice_wake": microphone = "Listening to your command…"
         case "voice_prompt": microphone = "Listening · " + microphoneName
         case "voice_discard":
-            if microphone.hasPrefix("Listening") { microphone = "Listening · " + microphoneName }
+            if microphone.hasPrefix("Listening") || microphone.hasPrefix("Transcribing") { microphone = "Listening · " + microphoneName }
         case "voice_waiting": microphoneName = ""; microphone = text
         case "voice_disabled", "voice_end": microphone = "Microphone off"
         case "voice_error": microphone = "Microphone error"; error = text

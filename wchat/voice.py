@@ -197,7 +197,8 @@ def capture_microphone(sd, feed, reset, emit, stop, requested=None, inventory=No
             refresh = True
 
 
-def listen(model_path, emit, stop, device=None, wav_path=None, wake_word="чат", playback=None):
+def listen(model_path, emit, stop, device=None, wav_path=None, wake_word="чат", playback=None,
+           asr="vosk", whisper_model=None, metric=lambda *a, **kw: None):
     """Blocking audio worker. Audio stays local; the caller receives only commands."""
     import vosk
     vosk.SetLogLevel(-1)
@@ -221,23 +222,43 @@ def listen(model_path, emit, stop, device=None, wav_path=None, wake_word="чат
             emit(event)
             recognizer.Reset()
 
-    if wav_path:
-        with wave.open(str(wav_path), "rb") as audio:
-            if (audio.getnchannels(), audio.getsampwidth(), audio.getframerate()) != (1, 2, rate):
-                raise ValueError("WAV required: PCM16, mono, 16000 Hz")
-            emit(VoiceEvent("ready", "Local WAV test"))
-            samples = 0
-            while not stop.is_set() and (data := audio.readframes(1600)):
-                samples += len(data) // 2
-                feed(data, samples / rate)
-            # A file ending while the speaker is talking is not a finished command.
-            if gate.armed:
-                emit(VoiceEvent("discard", "Recording ended before the command was complete"))
-        return
-
-    import sounddevice as sd
+    worker = hybrid = None
     def reset():
         gate.reset()
         recognizer.Reset()
 
-    capture_microphone(sd, feed, reset, emit, stop, requested=device)
+    if asr == "hybrid":
+        from .hybrid import WhisperWorker, HybridRecognizer, DEFAULT_MODEL
+        worker = WhisperWorker(whisper_model or DEFAULT_MODEL, metric)
+        emit(VoiceEvent("loading", "Loading Whisper…"))
+        try:
+            worker.warm(stop)
+        except BaseException:
+            worker.close()
+            raise
+        hybrid = HybridRecognizer(recognizer, worker, emit, wake_word, playback, metric)
+        feed, reset, gate = hybrid.feed, hybrid.reset, hybrid.gate
+    try:
+        if wav_path:
+            with wave.open(str(wav_path), "rb") as audio:
+                if (audio.getnchannels(), audio.getsampwidth(), audio.getframerate()) != (1, 2, rate):
+                    raise ValueError("WAV required: PCM16, mono, 16000 Hz")
+                emit(VoiceEvent("ready", "Local WAV test"))
+                samples = 0
+                while not stop.is_set() and (data := audio.readframes(1600)):
+                    samples += len(data) // 2
+                    feed(data, samples / rate)
+                if hybrid:
+                    while hybrid.future is not None and not stop.is_set():
+                        hybrid.poll()
+                        stop.wait(.02)
+                # A file ending while the speaker is talking is not a finished command.
+                if gate.armed:
+                    emit(VoiceEvent("discard", "Recording ended before the command was complete"))
+            return
+
+        import sounddevice as sd
+        capture_microphone(sd, feed, reset, emit, stop, requested=device)
+    finally:
+        if worker:
+            worker.close()

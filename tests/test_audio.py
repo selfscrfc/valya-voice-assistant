@@ -3,6 +3,8 @@ import tempfile
 import threading
 import unittest
 import wave
+from concurrent.futures import Future
+from unittest.mock import patch
 
 from wchat.voice import listen
 
@@ -27,6 +29,20 @@ class AudioTests(unittest.TestCase):
         events.clear()
         listen(MODEL, events.append, threading.Event(), wav_path=FIXTURES / "command.wav", playback=muted)
         self.assertTrue(any(e.kind == "prompt" for e in events))
+
+    def test_hybrid_wav_waits_for_pending_transcription(self):
+        class Worker:
+            def __init__(self, *args): pass
+            def warm(self, stop): pass
+            def submit(self, audio):
+                result = Future()
+                threading.Timer(.5, lambda: result.set_result("Чат, правильное поручение.")).start()
+                return result
+            def close(self): pass
+        events = []
+        with patch('wchat.hybrid.WhisperWorker', Worker):
+            listen(MODEL, events.append, threading.Event(), wav_path=FIXTURES / "command.wav", asr="hybrid")
+        self.assertEqual([e.text for e in events if e.kind == "prompt"], ["правильное поручение."])
 
     def test_continuous_phrase(self):
         events = self.recognize(FIXTURES / "command.wav")
