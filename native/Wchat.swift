@@ -59,8 +59,8 @@ struct Permission: Identifiable {
     @Published var sessions: [Conversation] = []
     @Published var active = "default"
     @Published var permissions: [Permission] = []
-    @Published var connection = "Подключение…"
-    @Published var microphone = "Запуск микрофона…"
+    @Published var connection = "Connecting…"
+    @Published var microphone = "Starting microphone…"
     private var microphoneName = ""
     @Published var error: String?
     @Published var connected = false
@@ -78,7 +78,7 @@ struct Permission: Identifiable {
 
     func start() {
         guard let root = Bundle.main.object(forInfoDictionaryKey: "WChatProjectRoot") as? String else {
-            error = "Не задана папка проекта"; return
+            error = "Project folder is not configured"; return
         }
         var args = Array(CommandLine.arguments.dropFirst())
         if let deviceIndex = args.firstIndex(of: "--device"), deviceIndex + 1 < args.count {
@@ -113,10 +113,10 @@ struct Permission: Identifiable {
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.connected = false
-                    self.connection = "Остановлен"
-                    self.microphone = "Микрофон выключен"
+                    self.connection = "Stopped"
+                    self.microphone = "Microphone off"
                     if process.terminationStatus != 0 && self.error == nil {
-                        self.error = "Клиент завершился. Подробности: \(logPath)"
+                        self.error = "Client exited. Details: \(logPath)"
                     }
                     self.onExit?()
                 }
@@ -135,7 +135,7 @@ struct Permission: Identifiable {
                     }
                 }
             }
-        } catch { self.error = error.localizedDescription; connection = "Ошибка запуска" }
+        } catch { self.error = error.localizedDescription; connection = "Startup failed" }
     }
     func send(_ payload: [String: Any]) {
         guard process.isRunning else { return }
@@ -168,9 +168,9 @@ struct Permission: Identifiable {
                 Permission(id: $0.key, method: $0.value["method"] as? String ?? "",
                            params: $0.value["params"] as? [String: Any] ?? [:])
             }
-            if event["halted"] as? Bool == true { connected = false; connection = "Нужен перезапуск" }
+            if event["halted"] as? Bool == true { connected = false; connection = "Restart required" }
         case "context_saved": contextSaved += 1
-        case "connected": connected = true; connection = "Codex подключён"
+        case "connected": connected = true; connection = "Codex connected"
         case "delta":
             if let id = event["job"] as? Int, let index = jobs.firstIndex(where: { $0.id == id }) {
                 let response = event["response"] as? String ?? jobs[index].response + text
@@ -181,14 +181,14 @@ struct Permission: Identifiable {
             }
         case "queued", "started", "finished", "requests_changed", "approval", "session":
             send(["action": "snapshot"])
-        case "voice_ready": microphoneName = text; microphone = "Слушаю: «чат» · " + text
-        case "voice_wake": microphone = "Слушаю поручение…"
-        case "voice_prompt": microphone = "Слушаю: «чат» · " + microphoneName
+        case "voice_ready": microphoneName = text; microphone = "Listening · " + text
+        case "voice_wake": microphone = "Listening to your command…"
+        case "voice_prompt": microphone = "Listening · " + microphoneName
         case "voice_discard":
-            if microphone.hasPrefix("Слушаю") { microphone = "Слушаю: «чат» · " + microphoneName }
+            if microphone.hasPrefix("Listening") { microphone = "Listening · " + microphoneName }
         case "voice_waiting": microphoneName = ""; microphone = text
-        case "voice_disabled", "voice_end": microphone = "Микрофон выключен"
-        case "voice_error": microphone = "Ошибка микрофона"; error = text
+        case "voice_disabled", "voice_end": microphone = "Microphone off"
+        case "voice_error": microphone = "Microphone error"; error = text
         case "error": error = text; send(["action": "snapshot"])
         default: break
         }
@@ -229,50 +229,37 @@ struct TurnView: View {
     let job: Job
     var status: String {
         switch job.status {
-        case "queued": return "В очереди"
-        case "starting", "running": return "Выполняю…"
-        case "completed": return "Ответ готов"
-        case "cancelled", "interrupted": return "Остановлено"
-        case "failed": return "Ошибка"
-        default: return "Нужно проверить результат"
+        case "queued": return "Queued"
+        case "starting", "running": return "Working…"
+        case "completed": return "Complete"
+        case "cancelled", "interrupted": return "Stopped"
+        case "failed": return "Error"
+        default: return "Review result"
         }
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            HStack(alignment: .top, spacing: 18) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Вы").foregroundStyle(Ink.cream)
-                    if job.source == "voice" { Text("голос").font(.system(size: 10)).foregroundStyle(Ink.muted) }
-                }.font(.system(size: 12, weight: .medium)).frame(width: 48, alignment: .leading).padding(.top, 3)
+        VStack(alignment: .leading, spacing: 20) {
+            HStack {
+                Spacer(minLength: 64)
                 Text(job.prompt).font(.system(size: 15)).foregroundStyle(Ink.cream)
-                    .lineSpacing(5).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 14)
-                    .overlay(alignment: .leading) { Rectangle().fill(Ink.cream.opacity(0.45)).frame(width: 2) }
-            }
-            HStack(alignment: .top, spacing: 18) {
-                Text("wchat").font(.system(size: 12)).foregroundStyle(Ink.muted)
-                    .frame(width: 48, alignment: .leading).padding(.top, 3)
-                VStack(alignment: .leading, spacing: 10) {
-                    if job.status != "completed" {
-                        Text(status).font(.system(size: 12)).foregroundStyle(Ink.muted)
-                    }
-                    if job.response.isEmpty && ["queued", "starting", "running"].contains(job.status) {
-                        ProgressView().controlSize(.small)
-                    } else { MarkdownMessage(text: job.response).font(.system(size: 15)).foregroundStyle(Ink.text) }
-                    if let error = job.error, !error.isEmpty {
-                        Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
-                    }
-                    if !job.response.isEmpty {
-                        Button {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(job.response, forType: .string)
-                        } label: { Image(systemName: "doc.on.doc").font(.system(size: 11)).foregroundStyle(Ink.muted) }
-                            .buttonStyle(QuietButton()).help("Скопировать ответ")
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }.padding(.vertical, 26)
-        .overlay(alignment: .bottom) { Hairline() }
+                    .lineSpacing(5).textSelection(.enabled)
+                    .padding(.horizontal, 16).padding(.vertical, 12)
+                    .background(Ink.field, in: RoundedRectangle(cornerRadius: 14))
+                    .frame(maxWidth: 560, alignment: .trailing)
+            }.frame(maxWidth: .infinity, alignment: .trailing)
+            VStack(alignment: .leading, spacing: 10) {
+                if job.status != "completed" {
+                    Text(status).font(.system(size: 12)).foregroundStyle(Ink.muted)
+                }
+                if job.response.isEmpty && ["queued", "starting", "running"].contains(job.status) {
+                    ProgressView().controlSize(.small)
+                } else { MarkdownMessage(text: job.response).font(.system(size: 15)).foregroundStyle(Ink.text) }
+                if let error = job.error, !error.isEmpty {
+                    Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+                }
+            }.frame(maxWidth: 680, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.trailing, 40)
+        }.padding(.vertical, 20)
     }
 }
 
@@ -310,9 +297,9 @@ struct PermissionCard: View {
                     switch field["type"] as? String {
                     case "boolean": result[key] = value == "true"
                     case "integer":
-                        guard let n = Int(value) else { throw NSError(domain: "Введите целое число", code: 1) }; result[key] = n
+                        guard let n = Int(value) else { throw NSError(domain: "Enter a whole number", code: 1) }; result[key] = n
                     case "number":
-                        guard let n = Double(value), n.isFinite else { throw NSError(domain: "Введите число", code: 1) }; result[key] = n
+                        guard let n = Double(value), n.isFinite else { throw NSError(domain: "Enter a number", code: 1) }; result[key] = n
                     default: result[key] = value
                     }
                 }
@@ -334,17 +321,17 @@ struct PermissionCard: View {
             let value = try formContent()
             invalid = nil
             model.send(["action": "reply", "request": permission.id, "decision": decision, "content": value])
-        } catch { invalid = "Проверьте заполнение полей: " + error.localizedDescription }
+        } catch { invalid = "Check the fields: " + error.localizedDescription }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Требуется ваше решение", systemImage: "hand.raised.fill").font(.headline).foregroundStyle(.orange)
-            Text(permission.params["message"] as? String ?? permission.params["reason"] as? String ?? "Разрешить действие?")
+            Label("Your approval is needed", systemImage: "hand.raised.fill").font(.headline).foregroundStyle(.orange)
+            Text(permission.params["message"] as? String ?? permission.params["reason"] as? String ?? "Allow this action?")
                 .textSelection(.enabled)
             if let command = permission.params["command"] as? String { Text(command).font(.system(.body, design: .monospaced)).textSelection(.enabled) }
             if let url = permission.params["url"] as? String { Text(url).textSelection(.enabled) }
-            DisclosureGroup("Подробности запроса") {
+            DisclosureGroup("Request details") {
                 Text(details).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
             }
             if needsForm {
@@ -357,35 +344,35 @@ struct PermissionCard: View {
                             }
                             let binding = Binding<String>(get: { values[key] ?? "" }, set: { values[key] = $0 })
                             if field["type"] as? String == "boolean" {
-                                Picker("Ответ", selection: binding) {
-                                    Text("Выберите…").tag("")
-                                    Text("Да").tag("true"); Text("Нет").tag("false")
+                                Picker("Answer", selection: binding) {
+                                    Text("Select…").tag("")
+                                    Text("Yes").tag("true"); Text("No").tag("false")
                                 }
                             } else if let options = field["enum"] as? [String] {
-                                Picker("Ответ", selection: binding) {
-                                    Text("Выберите…").tag("")
+                                Picker("Answer", selection: binding) {
+                                    Text("Select…").tag("")
                                     ForEach(options, id: \.self) { Text($0).tag($0) }
                                 }
                             } else if let options = field["oneOf"] as? [[String: String]] {
-                                Picker("Ответ", selection: binding) {
-                                    Text("Выберите…").tag("")
+                                Picker("Answer", selection: binding) {
+                                    Text("Select…").tag("")
                                     ForEach(options.indices, id: \.self) { i in
                                         Text(options[i]["title"] ?? options[i]["const"] ?? "").tag(options[i]["const"] ?? "")
                                     }
                                 }
-                            } else { TextField("Ответ", text: binding).textFieldStyle(.roundedBorder) }
+                            } else { TextField("Answer", text: binding).textFieldStyle(.roundedBorder) }
                         }
                     }
                 } else {
-                    Text("Поля ответа (JSON по схеме в подробностях)").font(.caption).foregroundStyle(.secondary)
+                    Text("Response fields (JSON matching the schema in details)").font(.caption).foregroundStyle(.secondary)
                     TextEditor(text: $content).font(.system(.body, design: .monospaced)).frame(height: 90)
                 }
             }
             if let invalid { Text(invalid).foregroundStyle(.red) }
             HStack {
-                Button("Отклонить") { model.send(["action": "reply", "request": permission.id, "decision": "decline"]) }
+                Button("Decline") { model.send(["action": "reply", "request": permission.id, "decision": "decline"]) }
                 Spacer()
-                Button("Подтвердить") { reply("accept") }.buttonStyle(QuietButton(outlined: true))
+                Button("Confirm") { reply("accept") }.buttonStyle(QuietButton(outlined: true))
             }
         }.padding(18).background(Ink.field).overlay(alignment: .leading) { Rectangle().fill(Ink.cream).frame(width: 2) }
         .onAppear {
@@ -445,7 +432,7 @@ struct Composer: NSViewRepresentable {
         view.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         view.minSize = .zero; view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         view.delegate = context.coordinator; view.submit = submit; view.focusChanged = focusChanged
-        view.setAccessibilityLabel("Сообщение")
+        view.setAccessibilityLabel("Message")
         scroll.documentView = view
         DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
         return scroll
@@ -464,6 +451,7 @@ struct ChatView: View {
     @State private var newName = ""
     @State private var showNew = false
     @State private var showContext = false
+    @AppStorage("sidebarVisible") private var sidebarVisible = true
     @State private var inputFocused = false
     @State private var historyLimit = 100
     var conversationJobs: [Job] { model.jobs.filter { $0.session == model.active } }
@@ -474,13 +462,11 @@ struct ChatView: View {
     }
     var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("wchat").font(.system(size: 20, weight: .regular)).tracking(-0.5)
-                .foregroundStyle(Ink.cream).padding(.bottom, 34)
             HStack {
-                Text("Диалоги").font(.system(size: 11)).foregroundStyle(Ink.muted)
+                Text("Conversations").font(.system(size: 11)).foregroundStyle(Ink.muted)
                 Spacer()
                 Button { showNew = true } label: { Image(systemName: "plus") }
-                    .buttonStyle(QuietButton()).help("Новый диалог").accessibilityLabel("Новый диалог")
+                    .buttonStyle(QuietButton()).help("New conversation").accessibilityLabel("New conversation")
             }.padding(.bottom, 8)
             ScrollView {
                 VStack(alignment: .leading, spacing: 3) {
@@ -499,8 +485,8 @@ struct ChatView: View {
             Hairline().padding(.bottom, 18)
             Button { showContext = true } label: {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Общий контекст").font(.system(size: 13)).foregroundStyle(Ink.cream)
-                    Text(model.commonContext.isEmpty ? "Проекты и файлы" : "Добавлен для всех диалогов")
+                    Text("Shared context").font(.system(size: 13)).foregroundStyle(Ink.cream)
+                    Text(model.commonContext.isEmpty ? "Projects and files" : "Used in every conversation")
                         .font(.system(size: 11)).foregroundStyle(Ink.muted)
                 }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain).padding(.bottom, 24)
@@ -508,50 +494,57 @@ struct ChatView: View {
                 Circle().fill(model.connected ? Ink.cream : Ink.muted).frame(width: 4, height: 4)
                 Text(model.connection).font(.system(size: 10)).foregroundStyle(Ink.muted)
             }
-        }.padding(.horizontal, 20).padding(.top, 25).padding(.bottom, 20)
+        }.padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 20)
             .frame(width: 190).background(Ink.sidebar)
     }
     var header: some View {
-        HStack(alignment: .center, spacing: 20) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(model.active).font(.system(size: 16)).foregroundStyle(Ink.cream)
-                Text(model.cwd.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                    .font(.system(size: 11, design: .monospaced)).foregroundStyle(Ink.muted)
-                    .lineLimit(1).truncationMode(.middle).help(model.cwd)
-            }
-            Spacer(minLength: 10)
-            Label(model.microphone,
-                  systemImage: model.microphone.contains("выключен") ? "mic.slash" : "mic")
-                .font(.system(size: 11)).foregroundStyle(Ink.muted).lineLimit(1).help(model.microphone)
-        }.padding(.horizontal, 30).padding(.vertical, 22)
+        HStack(spacing: 12) {
+            Button { sidebarVisible.toggle() } label: { Image(systemName: "sidebar.left") }
+                .buttonStyle(QuietButton())
+                .help(sidebarVisible ? "Hide conversations" : "Show conversations")
+                .accessibilityLabel(sidebarVisible ? "Hide conversations" : "Show conversations")
+                .keyboardShortcut("s", modifiers: [.command, .control])
+            Text(model.active).font(.system(size: 13, weight: .medium)).foregroundStyle(Ink.cream)
+                .lineLimit(1).truncationMode(.middle).frame(maxWidth: 140, alignment: .leading)
+            Rectangle().fill(Ink.line).frame(width: 1, height: 14)
+            Label(model.cwd.replacingOccurrences(of: NSHomeDirectory(), with: "~"), systemImage: "folder")
+                .font(.system(size: 11)).foregroundStyle(Ink.muted)
+                .lineLimit(1).truncationMode(.middle).help(model.cwd)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Label(model.microphone, systemImage: model.microphone.contains("off") ? "mic.slash" : "mic")
+                .font(.system(size: 11)).foregroundStyle(Ink.muted)
+                .lineLimit(1).truncationMode(.middle).frame(maxWidth: 220, alignment: .trailing)
+                .help(model.microphone + " • Wake word: чат")
+            Button { showContext = true } label: { Image(systemName: "slider.horizontal.3") }
+                .buttonStyle(QuietButton()).help("Shared context").accessibilityLabel("Shared context")
+        }.padding(.horizontal, 20).frame(height: 48)
     }
     var composer: some View {
         VStack(spacing: 10) {
             HStack(alignment: .bottom, spacing: 14) {
                 ZStack(alignment: .topLeading) {
                     if draft.isEmpty {
-                        Text("Напишите поручение…").font(.system(size: 15)).foregroundStyle(Ink.muted)
+                        Text("Message…").font(.system(size: 15)).foregroundStyle(Ink.muted)
                             .padding(.top, 3).padding(.leading, 5)
                     }
                     Composer(text: $draft, submit: submit, focusChanged: { inputFocused = $0 }).frame(height: 52)
                 }
                 Button(action: submit) { Image(systemName: "arrow.up").frame(width: 15, height: 18) }
-                    .buttonStyle(QuietButton(outlined: true)).disabled(!canSend).help("Отправить").accessibilityLabel("Отправить")
+                    .buttonStyle(QuietButton(outlined: true)).disabled(!canSend).help("Send").accessibilityLabel("Send")
             }.padding(14).background(Ink.field)
                 .overlay { RoundedRectangle(cornerRadius: 5).stroke(inputFocused ? Ink.cream.opacity(0.65) : Ink.line, lineWidth: 1) }
-            HStack {
-                Text("Enter - отправить · Shift+Enter - новая строка").font(.system(size: 10)).foregroundStyle(Ink.muted)
-                Spacer(minLength: 0)
-                if model.busy {
-                    Button("Очистить очередь") { model.send(["action": "clear"]) }.buttonStyle(QuietButton())
-                    Button("Остановить") { model.send(["action": "cancel"]) }.buttonStyle(QuietButton(outlined: true))
+            if model.busy {
+                HStack {
+                    Spacer(minLength: 0)
+                    Button("Clear queue") { model.send(["action": "clear"]) }.buttonStyle(QuietButton())
+                    Button("Stop") { model.send(["action": "cancel"]) }.buttonStyle(QuietButton(outlined: true))
                 }
             }
         }.padding(.horizontal, 30).padding(.top, 12).padding(.bottom, 18)
     }
     var body: some View {
         HStack(spacing: 0) {
-            sidebar
+            if sidebarVisible { sidebar }
             VStack(spacing: 0) {
                 header
                 Hairline()
@@ -567,17 +560,17 @@ struct ChatView: View {
                         // Eager, bounded layout avoids estimating changing rows while scrolling.
                         VStack(alignment: .leading, spacing: 0) {
                             if conversationJobs.count > historyLimit {
-                                Button("Показать предыдущие сообщения") { historyLimit += 100 }
+                                Button("Load earlier messages") { historyLimit += 100 }
                                     .buttonStyle(QuietButton()).padding(.vertical, 12)
                             }
                             if model.jobs.filter({ $0.session == model.active }).isEmpty {
                                 VStack(alignment: .leading, spacing: 12) {
-                                    Text("Пока нет сообщений").font(.system(size: 22)).foregroundStyle(Ink.cream)
-                                    Text(model.microphone.hasPrefix("Слушаю")
-                                         ? "Напишите поручение внизу или скажите «чат», затем задачу."
-                                         : "Напишите поручение внизу, чтобы начать этот диалог.")
+                                    Text("Start a conversation").font(.system(size: 22)).foregroundStyle(Ink.cream)
+                                    Text(model.microphone.hasPrefix("Listening")
+                                         ? "Type a message or say “чат”, followed by your request."
+                                         : "Type a message below to get started.")
                                         .font(.system(size: 14)).foregroundStyle(Ink.muted).lineSpacing(5)
-                                    Text("Ответы и выполненные поручения появятся здесь.")
+                                    Text("Your replies and completed tasks will appear here.")
                                         .font(.system(size: 12)).foregroundStyle(Ink.muted)
                                 }.frame(maxWidth: 440, alignment: .leading).padding(.vertical, 65)
                             }
@@ -601,16 +594,16 @@ struct ChatView: View {
                             }
                         }.padding(.horizontal, 30).padding(.vertical, 12)
                     }.frame(height: 230)
-                        .accessibilityLabel("Запросы разрешений")
+                        .accessibilityLabel("Permission requests")
                 }
                 composer
             }.background(Ink.canvas)
         }.foregroundStyle(Ink.text).frame(maxWidth: .infinity, maxHeight: .infinity)
-        .alert("Новый диалог", isPresented: $showNew) {
-            TextField("Имя диалога", text: $newName)
-            Button("Создать") { model.send(["action": "new", "name": newName]); newName = "" }
-            Button("Отмена", role: .cancel) {}
-        } message: { Text("Буквы, цифры, дефис или подчёркивание. Каждый диалог сохраняет свой контекст Codex.") }
+        .alert("New conversation", isPresented: $showNew) {
+            TextField("Conversation name", text: $newName)
+            Button("Create") { model.send(["action": "new", "name": newName]); newName = "" }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Letters, numbers, hyphens or underscores. Each conversation keeps its own Codex context.") }
         .sheet(isPresented: $showContext) { ContextEditor(model: model) }
     }
 }
@@ -624,15 +617,15 @@ struct ContextEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Общий контекст").font(.system(size: 22)).foregroundStyle(Ink.cream)
+                Text("Shared context").font(.system(size: 22)).foregroundStyle(Ink.cream)
                 Spacer()
-                Text("Для всех диалогов").font(.system(size: 11)).foregroundStyle(Ink.muted)
+                Text("For all conversations").font(.system(size: 11)).foregroundStyle(Ink.muted)
             }.padding(.bottom, 12)
-            Text("Опишите проекты и укажите пути к рабочим файлам.")
+            Text("Describe your projects and add paths to relevant files.")
                 .font(.system(size: 14)).foregroundStyle(Ink.text).padding(.bottom, 20)
             ZStack(alignment: .topLeading) {
                 if context.isEmpty {
-                    Text("Например:\nЛичные заметки - ~/Documents/jack\nПроект wchat - ~/wchat, голосовой ассистент для macOS.")
+                    Text("For example:\nPersonal notes - ~/Documents/jack\nWebsite project - ~/Projects/website, a personal portfolio.")
                         .font(.system(size: 14)).foregroundStyle(Ink.muted).lineSpacing(6).padding(12)
                 }
                 TextEditor(text: $context).font(.system(size: 14)).foregroundStyle(Ink.text)
@@ -641,24 +634,24 @@ struct ContextEditor: View {
                 .overlay { RoundedRectangle(cornerRadius: 4).stroke(fieldFocused ? Ink.cream.opacity(0.65) : Ink.line, lineWidth: 1) }
                 .frame(minHeight: 210).padding(.bottom, 10)
             HStack {
-                Text("Передаётся Codex с каждым новым поручением.")
+                Text("Included with every new request to Codex.")
                 Spacer()
                 Text("\(context.count) / 64000").monospacedDigit()
             }.font(.system(size: 11)).foregroundStyle(Ink.muted).padding(.bottom, 24)
-            Text("Папка новых диалогов").font(.system(size: 13)).foregroundStyle(Ink.cream).padding(.bottom, 8)
+            Text("Default folder for new conversations").font(.system(size: 13)).foregroundStyle(Ink.cream).padding(.bottom, 8)
             TextField("~/Documents/jack", text: $cwd).textFieldStyle(.plain)
                 .font(.system(size: 12, design: .monospaced)).padding(10).background(Ink.field)
                 .overlay { RoundedRectangle(cornerRadius: 4).stroke(Ink.line, lineWidth: 1) }.padding(.bottom, 10)
-            Text("Файлы не загружаются автоматически. Существующие диалоги сохраняют свою папку и прежнюю переписку.")
+            Text("Files are not loaded automatically. Existing conversations keep their folder and history.")
                 .font(.system(size: 11)).foregroundStyle(Ink.muted).fixedSize(horizontal: false, vertical: true).lineSpacing(3)
             if let error = model.error { Text(error).foregroundStyle(.orange).font(.caption).padding(.top, 10) }
             Spacer(minLength: 20)
             Hairline().padding(.bottom, 14)
             HStack {
-                Text("Сохраняется на этом Mac").font(.system(size: 11)).foregroundStyle(Ink.muted)
+                Text("Saved on this Mac").font(.system(size: 11)).foregroundStyle(Ink.muted)
                 Spacer()
-                Button("Отмена") { dismiss() }.buttonStyle(QuietButton())
-                Button("Сохранить") {
+                Button("Cancel") { dismiss() }.buttonStyle(QuietButton())
+                Button("Save") {
                     model.error = nil
                     model.send(["action": "save_context", "context": context, "cwd": cwd])
                 }.buttonStyle(QuietButton(outlined: true)).disabled(context.count > 64000 || !model.connected)
@@ -676,22 +669,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model = ChatModel()
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1060, height: 760),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "wchat"
+        window.title = "Chat"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.backgroundColor = Ink.native(0x181915)
         window.appearance = NSAppearance(named: .darkAqua)
-        let hosting = NSHostingView(rootView: ChatView(model: model).tint(Ink.cream).preferredColorScheme(.dark))
+        let hosting = NSHostingView(rootView: ChatView(model: model).tint(Ink.cream).preferredColorScheme(.dark).environment(\.locale, Locale(identifier: "en")))
         // AppKit owns window geometry. Content changes must not renegotiate its bounds.
         hosting.sizingOptions = []
         window.contentMinSize = NSSize(width: 800, height: 560)
         window.contentView = hosting
         window.center(); window.makeKeyAndOrderFront(nil)
         let menu = NSMenu(); let item = NSMenuItem(); menu.addItem(item)
-        let appMenu = NSMenu(); appMenu.addItem(withTitle: "Завершить wchat", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let appMenu = NSMenu(); appMenu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         item.submenu = appMenu
-        let edit = NSMenuItem(); menu.addItem(edit); let editMenu = NSMenu(title: "Правка"); edit.submenu = editMenu
-        for (title, action, key) in [("Вырезать", "cut:", "x"), ("Копировать", "copy:", "c"), ("Вставить", "paste:", "v"), ("Выделить всё", "selectAll:", "a")] {
+        let edit = NSMenuItem(); menu.addItem(edit); let editMenu = NSMenu(title: "Edit"); edit.submenu = editMenu
+        for (title, action, key) in [("Cut", "cut:", "x"), ("Copy", "copy:", "c"), ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")] {
             editMenu.addItem(withTitle: title, action: Selector(action), keyEquivalent: key)
         }
         NSApp.mainMenu = menu

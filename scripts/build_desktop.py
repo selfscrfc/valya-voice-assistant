@@ -11,9 +11,9 @@ app = root / 'build/Wchat.app/Contents'
 with (app / 'Info.plist').open('wb') as stream:
     plistlib.dump({
         'CFBundleExecutable': 'Wchat', 'CFBundleIdentifier': 'org.selfscrfc.wchat',
-        'CFBundleName': 'wchat', 'CFBundlePackageType': 'APPL', 'CFBundleVersion': '1',
+        'CFBundleName': 'Chat', 'CFBundleDevelopmentRegion': 'en', 'CFBundlePackageType': 'APPL', 'CFBundleVersion': '1',
         'CFBundleShortVersionString': '0.2.0', 'LSMinimumSystemVersion': '14.0',
-        'NSMicrophoneUsageDescription': 'wchat слушает слово «чат» и распознаёт поручения локально.',
+        'NSMicrophoneUsageDescription': 'Listens for the wake word “чат” and transcribes commands locally.',
         'WChatProjectRoot': str(root), 'NSHighResolutionCapable': True,
     }, stream)
 sdk = os.environ.get('SDKROOT') or str(pathlib.Path(subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()).parent / 'MacOSX.sdk')

@@ -14,7 +14,7 @@ class Store:
             fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             self.lock.close()
-            raise RuntimeError("С этим хранилищем уже работает другой wchat") from None
+            raise RuntimeError("Another instance is already using this storage") from None
         self.db = sqlite3.connect(self.directory / "history.sqlite")
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -42,19 +42,19 @@ class Store:
     def session(self, name):
         row = self.db.execute("SELECT * FROM sessions WHERE name=?", (name,)).fetchone()
         if row is None:
-            raise ValueError(f"Нет диалога {name!r}; используйте /new")
+            raise ValueError(f"Conversation not found: {name!r}; use /new")
         return dict(row)
 
     def create(self, name, cwd):
         if not re.fullmatch(r"[\w-]{1,64}", name):
-            raise ValueError("Имя диалога: 1-64 буквы, цифры, дефис или подчёркивание")
+            raise ValueError("Conversation name: 1-64 letters, numbers, hyphens or underscores")
         path = Path(cwd).expanduser().resolve()
         if not path.is_dir():
-            raise ValueError(f"Нет рабочей папки: {path}")
+            raise ValueError(f"Working folder does not exist: {path}")
         try:
             self.db.execute("INSERT INTO sessions(name,cwd) VALUES (?,?)", (name, str(path)))
         except sqlite3.IntegrityError:
-            raise ValueError(f"Диалог {name!r} уже существует") from None
+            raise ValueError(f"Conversation {name!r} already exists") from None
         self.db.commit()
         self.select(name)
 
@@ -81,10 +81,10 @@ class Store:
 
     def save_context(self, context, cwd):
         if not isinstance(context, str) or len(context) > 64000:
-            raise ValueError("Общий контекст: не более 64000 символов")
+            raise ValueError("Shared context must not exceed 64000 characters")
         path = Path(cwd).expanduser().resolve()
         if not path.is_dir():
-            raise ValueError(f"Нет рабочей папки: {path}")
+            raise ValueError(f"Working folder does not exist: {path}")
         with self.db:
             self.db.executemany("INSERT OR REPLACE INTO settings VALUES (?,?)",
                                 [("common_context", context), ("default_cwd", str(path))])
@@ -96,7 +96,7 @@ class Store:
     def enqueue(self, session, prompt, source):
         self.session(session)
         if not prompt.strip() or len(prompt) > 32000:
-            raise ValueError("Поручение должно содержать от 1 до 32000 символов")
+            raise ValueError("Message must contain 1-32000 characters")
         cur = self.db.execute("INSERT INTO jobs(session,prompt,source,status) VALUES (?,?,?,'queued')",
                               (session, prompt.strip(), source))
         self.db.commit()

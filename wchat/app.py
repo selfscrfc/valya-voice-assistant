@@ -30,12 +30,12 @@ class Assistant:
 
     async def start(self):
         await self.codex.start(self.store.directory / "codex.log")
-        self.emit("connected", "Codex: вход через ChatGPT подтверждён")
+        self.emit("connected", "Codex: ChatGPT sign-in confirmed")
         self.worker = asyncio.create_task(self.work())
 
     def enqueue(self, prompt, source="text", session=None):
         if self.halted:
-            raise RuntimeError("Соединение требует восстановления. Перезапустите клиент; задачи не повторяются автоматически.")
+            raise RuntimeError("Connection needs recovery. Restart the client; tasks are not retried automatically.")
         name = session or self.store.active
         job_id = self.store.enqueue(name, prompt, source)
         self.waiters[job_id] = asyncio.get_running_loop().create_future()
@@ -56,7 +56,7 @@ class Assistant:
             if method in ("item/commandExecution/requestApproval", "item/fileChange/requestApproval",
                           "item/tool/requestUserInput", "mcpServer/elicitation/request"):
                 if not self.interactive:
-                    self.emit("input_unavailable", "Для ответа на запрос используйте интерактивный режим", method=method)
+                    self.emit("input_unavailable", "Use interactive mode to answer this request", method=method)
                     if method.endswith("/requestApproval"):
                         self.spawn_reply(message["id"], {"decision": "decline"})
                     elif method == "mcpServer/elicitation/request":
@@ -178,7 +178,7 @@ class Assistant:
                           elapsed_seconds=round(time.monotonic() - self.started_at, 3))
             except asyncio.CancelledError:
                 self.store.update(job_id, status="unknown", response="\n\n".join(self.messages.values()),
-                                  error="Клиент остановлен; проверьте исход задачи")
+                                  error="Client stopped; check the task outcome")
                 raise
             except Exception as exc:
                 # If a request timed out, an action may already have happened.
@@ -205,11 +205,11 @@ class Assistant:
         if self.current_turn and self.current_thread:
             await self.codex.call("turn/interrupt", {"threadId": self.current_thread,
                                                      "turnId": self.current_turn}, timeout=10)
-            self.emit("status", "Запрошена отмена текущего поручения")
+            self.emit("status", "Cancellation requested")
         elif self.current is not None:
-            self.emit("status", "Отмена принята; запускаемое поручение будет остановлено")
+            self.emit("status", "Cancellation accepted; the starting task will be stopped")
         else:
-            self.emit("status", "Нет выполняемой задачи")
+            self.emit("status", "No task is running")
 
     def clear_queue(self):
         while not self.queue.empty():
@@ -217,7 +217,7 @@ class Assistant:
             self.store.update(job_id, status="cancelled")
             self.waiters[job_id].set_result(self.store.job(job_id))
             self.queue.task_done()
-        self.emit("status", "Очередь очищена")
+        self.emit("status", "Queue cleared")
 
     async def command(self, text):
         parts = shlex.split(text)
@@ -247,29 +247,29 @@ class Assistant:
             from .ui import UIProtocol
             request = self.requests.get(args[0])
             if not request or request["method"] != "mcpServer/elicitation/request":
-                raise ValueError("Нет такого запроса разрешения")
+                raise ValueError("Permission request not found")
             await UIProtocol(self).handle({"action": "reply", "request": args[0], "decision": args[1],
                                            "content": json.loads(args[2]) if len(args) == 3 else {}})
         elif command == "/approve" and len(args) == 2:
             request = self.requests.get(args[0])
             if not request or not request["method"].endswith("/requestApproval") or args[1] not in ("yes", "no"):
-                raise ValueError("Нужен актуальный запрос: /approve ID yes|no")
+                raise ValueError("An active request is required: /approve ID yes|no")
             await self.codex.reply(request["id"], {"decision": "accept" if args[1] == "yes" else "decline"})
             self.requests.pop(args[0], None)
         elif command == "/answer" and len(args) >= 3:
             request = self.requests.get(args[0])
             if not request or request["method"] != "item/tool/requestUserInput":
-                raise ValueError("Нет такого вопроса")
+                raise ValueError("Question not found")
             question_ids = {q["id"] for q in request["params"]["questions"]}
             if args[1] not in question_ids:
-                raise ValueError("Неизвестный идентификатор вопроса")
+                raise ValueError("Unknown question ID")
             request["answers"][args[1]] = {"answers": [" ".join(args[2:])]}
             if request["answers"].keys() >= question_ids:
                 await self.codex.reply(request["id"], {"answers": request["answers"]})
                 self.requests.pop(args[0], None)
         else:
-            raise ValueError("Команды: /new ИМЯ [ПАПКА], /use ИМЯ, /sessions, /history, /queue, "
-                             "/cancel, /clear, /elicit ID accept|decline|cancel [JSON], /approve ID yes|no, /answer ID ВОПРОС ОТВЕТ, /quit")
+            raise ValueError("Commands: /new NAME [FOLDER], /use NAME, /sessions, /history, /queue, "
+                             "/cancel, /clear, /elicit ID accept|decline|cancel [JSON], /approve ID yes|no, /answer ID QUESTION ANSWER, /quit")
 
     async def close(self):
         if self.current_turn and not self.codex.closed:

@@ -19,9 +19,9 @@ import Foundation
             try receive(["kind": "voice_discard", "text": ""])
         }
         check(model.revision == initial, "microphone state changes must not request transcript layout/scroll")
-        try receive(["kind": "voice_waiting", "text": "Ожидаю микрофон"])
+        try receive(["kind": "voice_waiting", "text": "Waiting for a microphone"])
         try receive(["kind": "voice_discard", "text": ""])
-        check(model.microphone == "Ожидаю микрофон", "discard must not claim a disconnected microphone is listening")
+        check(model.microphone == "Waiting for a microphone", "discard must not claim a disconnected microphone is listening")
         try receive(["kind": "voice_ready", "text": "Wireless Mic Rx"])
         try receive(["kind": "voice_prompt", "text": "test"])
         check(model.microphone.contains("Wireless Mic Rx"), "selected device must remain visible after a command")

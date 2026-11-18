@@ -36,7 +36,7 @@ class StoreTests(unittest.TestCase):
         self.assertIsNone(self.store.session("other")["thread_id"])
 
     def test_second_process_is_rejected(self):
-        with self.assertRaisesRegex(RuntimeError, "другой"):
+        with self.assertRaisesRegex(RuntimeError, "Another instance"):
             Store(self.tmp.name)
 
     def test_invalid_session_cannot_replace_existing(self):

@@ -17,24 +17,24 @@ ROOT = Path.home() / "Library/Application Support/wchat"
 
 
 def parser():
-    p = argparse.ArgumentParser(description="wchat: постоянно слушает слово «чат» и выполняет поручения через Codex")
+    p = argparse.ArgumentParser(description="Voice assistant: listens for “чат” and runs tasks through Codex")
     modes = p.add_mutually_exclusive_group()
-    modes.add_argument("--text", action="store_true", help="Только письменный чат, без микрофона")
-    modes.add_argument("--once", help="Одно письменное поручение, затем выход")
-    modes.add_argument("--wav", type=Path, help="Вместо микрофона прочитать PCM16 mono 16 kHz WAV")
-    p.add_argument("--devices", action="store_true", help="Показать доступные микрофоны и выйти")
-    p.add_argument("--device", help="auto (по умолчанию): DJI, иначе встроенный Mac; либо ID/уникальное имя")
+    modes.add_argument("--text", action="store_true", help="Text chat only, without a microphone")
+    modes.add_argument("--once", help="Send one text request, then exit")
+    modes.add_argument("--wav", type=Path, help="Read PCM16 mono 16 kHz WAV instead of microphone audio")
+    p.add_argument("--devices", action="store_true", help="List available microphones and exit")
+    p.add_argument("--device", help="auto (default): DJI, otherwise built-in Mac; or ID/unique name")
     p.add_argument("--voice-model", type=Path, default=ROOT / "models/vosk-model-small-ru-0.22")
     p.add_argument("--wake-word", default="чат")
-    p.add_argument("--transcribe-only", action="store_true", help="Проверять активацию локально, без Codex")
+    p.add_argument("--transcribe-only", action="store_true", help="Test wake detection locally, without Codex")
     p.add_argument("--data-dir", type=Path, default=ROOT)
-    p.add_argument("--cwd", type=Path, help="Папка для нового диалога; по умолчанию ~/Documents/jack")
-    p.add_argument("--session", help="Создать или выбрать именованный диалог")
-    p.add_argument("--model", help="Модель Codex; по умолчанию настройка установленного CLI")
+    p.add_argument("--cwd", type=Path, help="Folder for new conversations; default ~/Documents/jack")
+    p.add_argument("--session", help="Create or select a named conversation")
+    p.add_argument("--model", help="Codex model; defaults to the installed CLI setting")
     p.add_argument("--codex", default="codex", help=argparse.SUPPRESS)
     p.add_argument("--turn-timeout", type=float, default=600)
-    p.add_argument("--ui", action="store_true", help="JSON-протокол графического клиента")
-    p.add_argument("--json", action="store_true", help="Выводить события JSONL")
+    p.add_argument("--ui", action="store_true", help="JSON protocol for the desktop client")
+    p.add_argument("--json", action="store_true", help="Output JSONL events")
     return p
 
 
@@ -58,12 +58,12 @@ async def main(args):
         return 0
     voice_enabled = not args.text and args.once is None
     if args.text:
-        emit("voice_disabled", "Микрофон выключен: запуск с --text включает только письменный чат. "
-             "Для голоса перезапустите без --text, например ./run --device 'MacBook Pro Microphone'.")
+        emit("voice_disabled", "Microphone off: --text enables text chat only. "
+             "For voice, restart without --text, for example ./run --device 'MacBook Pro Microphone'.")
     if args.transcribe_only and not voice_enabled:
-        raise ValueError("--transcribe-only используется с микрофоном или --wav")
+        raise ValueError("--transcribe-only requires a microphone or --wav")
     if voice_enabled and not args.voice_model.is_dir():
-        raise ValueError(f"Нет модели {args.voice_model}; выполните make setup")
+        raise ValueError(f"Model not found: {args.voice_model}; run make setup")
     store = Store(args.data_dir)
     assistant = Assistant(store, emit, executable=args.codex, model=args.model, turn_timeout=args.turn_timeout,
                           interactive=args.once is None and args.wav is None)
@@ -89,7 +89,7 @@ async def main(args):
         emit("session", store.active, cwd=store.session(store.active)["cwd"])
         for job in store.jobs(limit=100):
             if job["status"] in ("unknown", "needs_review"):
-                emit("review", "Проверьте прежнее поручение перед повтором", job=job["id"], status=job["status"])
+                emit("review", "Review the previous task before retrying", job=job["id"], status=job["status"])
         if not args.transcribe_only:
             await assistant.start()
         if args.ui:
@@ -111,7 +111,7 @@ async def main(args):
             except (OSError, ValueError):
                 assistant.interactive = False
                 if not voice_enabled:
-                    emit("error", "Нет доступного терминального ввода")
+                    emit("error", "Terminal input is unavailable")
                     exit_requested.set()
                 return
             while line := await reader.readline():
@@ -129,7 +129,7 @@ async def main(args):
                             return
                         await ui.handle(action)
                     elif args.transcribe_only:
-                        emit("status", "Локальная проверка: /quit для выхода")
+                        emit("status", "Local test: /quit to exit")
                     elif text.startswith("/"):
                         await assistant.command(text)
                     else:
@@ -145,7 +145,7 @@ async def main(args):
                 exit_requested.set()
 
         if not args.wav:
-            emit("help", "Для выхода /quit. /sessions, /new ИМЯ [ПАПКА], /use ИМЯ, /history, /cancel, /queue, /clear")
+            emit("help", "Exit with /quit. /sessions, /new NAME [FOLDER], /use NAME, /history, /cancel, /queue, /clear")
             stdin_task = asyncio.create_task(input_loop())
         if voice_enabled:
             def audio_worker():

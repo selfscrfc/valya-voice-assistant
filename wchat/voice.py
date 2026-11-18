@@ -20,7 +20,7 @@ class WakeGate:
 
     def __init__(self, wake_word="чат", timeout=12, max_seconds=60):
         if not re.fullmatch(r"\w+", wake_word):
-            raise ValueError("Слово активации должно быть одним непустым словом")
+            raise ValueError("Wake word must be a single nonempty word")
         self.pattern = re.compile(r"^\s*" + re.escape(wake_word) + r"\b[\s,.:;!?-]*", re.I)
         self.timeout = timeout
         self.max_seconds = max_seconds
@@ -35,7 +35,7 @@ class WakeGate:
     def tick(self, now):
         if self.armed and (now - self.last_change > self.timeout or now - self.started > self.max_seconds):
             self.reset()
-            return [VoiceEvent("discard", "Время ожидания поручения истекло")]
+            return [VoiceEvent("discard", "Timed out waiting for a command")]
         return []
 
     def feed(self, text, final, now):
@@ -60,7 +60,7 @@ class WakeGate:
         # A partial 'чат' can be revised by the recognizer: do not execute it.
         if not match and not self.awaiting_next:
             self.reset()
-            return events + [VoiceEvent("discard", "Слово активации не подтвердилось")]
+            return events + [VoiceEvent("discard", "Wake word was not confirmed")]
         prompt = text[match.end():].strip() if match else text
         if not prompt:
             self.awaiting_next = True
@@ -82,15 +82,15 @@ def select_device(requested, options=None):
         from .audio_devices import MacAudio, automatic_candidates
         candidates = automatic_candidates(options, MacAudio().devices())
         if not candidates:
-            raise ValueError("Не найден DJI или встроенный микрофон Mac")
+            raise ValueError("No DJI or built-in Mac microphone found")
         return candidates[0][0]
     if requested.isdecimal():
         matches = [i for i, _ in options if i == int(requested)]
     else:
         matches = [i for i, name in options if requested.casefold() in name.casefold()]
     if len(matches) != 1:
-        raise ValueError("Выберите один микрофон: --devices, затем --device ID или уникальное имя. "
-                         "Для автоматического выбора используйте --device auto.")
+        raise ValueError("Select one microphone: --devices, then --device ID or a unique name. "
+                         "Use --device auto for automatic selection.")
     return matches[0]
 
 
@@ -119,14 +119,14 @@ def capture_stream(sd, selected, name, feed, emit, stop, changed):
             if changed():
                 return
             if overflow:
-                raise AudioInputError("Потеря аудиоданных; повторите поручение")
+                raise AudioInputError("Audio data lost; repeat your command")
             if not stream.active:
-                raise AudioInputError("Микрофон отключён")
+                raise AudioInputError("Microphone disconnected")
             try:
                 data = blocks.get(timeout=.2)
             except queue.Empty:
                 if time.monotonic() - last_audio > 1:
-                    raise AudioInputError("Микрофон перестал передавать звук") from None
+                    raise AudioInputError("Microphone stopped sending audio") from None
                 continue
             last_audio = time.monotonic()
             feed(data, last_audio)
@@ -156,7 +156,7 @@ def capture_microphone(sd, feed, reset, emit, stop, requested=None, inventory=No
             candidates = automatic_candidates(options, hardware)
             available = [(i, n) for i, n in candidates if failed_until.get(n, 0) <= clock()]
             if not available:
-                notice = "Ожидаю DJI или встроенный микрофон Mac"
+                notice = "Waiting for a DJI or built-in Mac microphone"
                 if notice != last_notice:
                     emit(VoiceEvent("waiting", notice))
                     last_notice = notice
@@ -182,14 +182,14 @@ def capture_microphone(sd, feed, reset, emit, stop, requested=None, inventory=No
                 capture(sd, selected, name, feed, emit, stop, changed)
             except (sd.PortAudioError, AudioInputError, OSError) as exc:
                 failed_until[name] = clock() + 10
-                emit(VoiceEvent("waiting", f"{name}: {exc}. Выбираю доступный микрофон"))
+                emit(VoiceEvent("waiting", f"{name}: {exc}. Selecting an available microphone"))
             finally:
                 # Never combine the start of a command from one input with another input's audio.
                 reset()
-                emit(VoiceEvent("discard", "Захват прерван; повторите поручение после готовности микрофона"))
+                emit(VoiceEvent("discard", "Recording interrupted; repeat your command when the microphone is ready"))
             refresh = True
         except (sd.PortAudioError, OSError) as exc:
-            notice = "Ожидаю микрофон: " + str(exc)
+            notice = "Waiting for a microphone: " + str(exc)
             if notice != last_notice:
                 emit(VoiceEvent("waiting", notice))
                 last_notice = notice
@@ -220,15 +220,15 @@ def listen(model_path, emit, stop, device=None, wav_path=None, wake_word="чат
     if wav_path:
         with wave.open(str(wav_path), "rb") as audio:
             if (audio.getnchannels(), audio.getsampwidth(), audio.getframerate()) != (1, 2, rate):
-                raise ValueError("Нужен WAV: PCM16, mono, 16000 Hz")
-            emit(VoiceEvent("ready", "Локальная проверка WAV"))
+                raise ValueError("WAV required: PCM16, mono, 16000 Hz")
+            emit(VoiceEvent("ready", "Local WAV test"))
             samples = 0
             while not stop.is_set() and (data := audio.readframes(1600)):
                 samples += len(data) // 2
                 feed(data, samples / rate)
             # A file ending while the speaker is talking is not a finished command.
             if gate.armed:
-                emit(VoiceEvent("discard", "Запись закончилась до завершения поручения"))
+                emit(VoiceEvent("discard", "Recording ended before the command was complete"))
         return
 
     import sounddevice as sd

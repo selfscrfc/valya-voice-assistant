@@ -32,11 +32,11 @@ class Codex:
         await self.send({"method": "initialized", "params": {}})
         account = await self.call("account/read", {"refreshToken": False})
         if (account.get("account") or {}).get("type") not in ("chatgpt", "chatgptAuthTokens"):
-            raise RPCError("Требуется вход через ChatGPT: выполните codex login. API-ключ не используется.")
+            raise RPCError("ChatGPT sign-in required: run codex login. API keys are not used.")
 
     async def send(self, value):
         if self.closed or not self.process or self.process.returncode is not None:
-            raise RPCError("Соединение с Codex закрыто")
+            raise RPCError("Codex connection is closed")
         self.process.stdin.write((json.dumps(value, ensure_ascii=False) + "\n").encode())
         await self.process.stdin.drain()
 
@@ -49,7 +49,7 @@ class Codex:
             await self.send({"id": request_id, "method": method, "params": params})
             return await asyncio.wait_for(future, timeout)
         except asyncio.TimeoutError as exc:
-            raise RPCError(f"Тайм-аут {method}; исход запроса нужно проверить") from exc
+            raise RPCError(f"Timeout for {method}; check the request outcome") from exc
         finally:
             self.pending.pop(request_id, None)
 
@@ -57,7 +57,7 @@ class Codex:
         await self.send({"id": request_id, **({"error": error} if error else {"result": result})})
 
     async def _read(self):
-        failure = "Codex завершил соединение"
+        failure = "Codex closed the connection"
         try:
             while line := await self.process.stdout.readline():
                 message = json.loads(line)
@@ -73,7 +73,7 @@ class Codex:
         except asyncio.CancelledError:
             return
         except Exception as exc:
-            failure = f"Ошибка транспорта Codex: {exc}"
+            failure = f"Codex transport error: {exc}"
         finally:
             for future in list(self.pending.values()):
                 if not future.done():

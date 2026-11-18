@@ -17,7 +17,7 @@ class UIProtocol:
 
     async def handle(self, payload):
         if not isinstance(payload, dict):
-            raise ValueError("Ожидался объект команды")
+            raise ValueError("Expected a command object")
         app = self.app
         action = payload.get("action")
         if action == "send":
@@ -36,10 +36,10 @@ class UIProtocol:
         elif action == "reply":
             request = app.requests.get(str(payload["request"]))
             if not request:
-                raise ValueError("Запрос уже закрыт")
+                raise ValueError("This request is already closed")
             decision = payload.get("decision")
             if decision not in ("accept", "decline", "cancel"):
-                raise ValueError("Неизвестное решение")
+                raise ValueError("Unknown decision")
             method = request["method"]
             content = payload.get("content", {})
             if method == "mcpServer/elicitation/request":
@@ -50,7 +50,7 @@ class UIProtocol:
                     try:
                         Draft202012Validator.check_schema(schema)
                     except SchemaError as exc:
-                        raise ValueError("Неподдерживаемая схема запроса: " + exc.message) from exc
+                        raise ValueError("Unsupported request schema: " + exc.message) from exc
                     errors = list(Draft202012Validator(schema).iter_errors(content))
                     if errors:
                         raise ValueError(errors[0].message)
@@ -67,10 +67,10 @@ class UIProtocol:
                         or not v["answers"] or any(not isinstance(a, str) or not a.strip() for a in v["answers"])
                         for v in content.values()
                     ):
-                        raise ValueError("Ответьте на каждый вопрос")
+                        raise ValueError("Answer every question")
                 result = {"answers": content if decision == "accept" else {}}
             await app.codex.reply(request["id"], result)
             app.requests.pop(str(payload["request"]), None)
         elif action != "snapshot":
-            raise ValueError("Неизвестная команда интерфейса")
+            raise ValueError("Unknown interface command")
         self.snapshot()
