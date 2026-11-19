@@ -670,13 +670,16 @@ struct ContextEditor: View {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     var window: NSWindow!
     var model: ChatModel!
+    var statusItem: NSStatusItem!
     func applicationDidFinishLaunching(_ notification: Notification) {
         model = ChatModel()
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1060, height: 760),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.delegate = self
+        window.isReleasedWhenClosed = false
         window.title = "Chat"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
@@ -689,17 +692,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentView = hosting
         window.center(); window.makeKeyAndOrderFront(nil)
         let menu = NSMenu(); let item = NSMenuItem(); menu.addItem(item)
-        let appMenu = NSMenu(); appMenu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let appMenu = NSMenu()
+        let showChatItem = NSMenuItem(title: "Show Chat", action: #selector(showChat(_:)), keyEquivalent: "0")
+        showChatItem.target = self; appMenu.addItem(showChatItem)
+        let hideChatItem = NSMenuItem(title: "Hide Chat", action: #selector(hideChat(_:)), keyEquivalent: "w")
+        hideChatItem.target = self; appMenu.addItem(hideChatItem)
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Quit Valya", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         item.submenu = appMenu
         let edit = NSMenuItem(); menu.addItem(edit); let editMenu = NSMenu(title: "Edit"); edit.submenu = editMenu
         for (title, action, key) in [("Cut", "cut:", "x"), ("Copy", "copy:", "c"), ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")] {
             editMenu.addItem(withTitle: title, action: Selector(action), keyEquivalent: key)
         }
         NSApp.mainMenu = menu
+        installStatusMenu()
         NSApp.activate(ignoringOtherApps: true)
         model.start()
     }
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func installStatusMenu() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Valya")
+        statusItem.button?.toolTip = "Valya - voice assistant"
+        statusItem.button?.setAccessibilityLabel("Valya")
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.delegate = self
+        let state = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
+        state.tag = 1; state.isEnabled = false
+        menu.addItem(state)
+        menu.addItem(.separator())
+        let show = NSMenuItem(title: "Show Chat", action: #selector(showChat(_:)), keyEquivalent: "")
+        show.target = self; menu.addItem(show)
+        let hide = NSMenuItem(title: "Hide Chat", action: #selector(hideChat(_:)), keyEquivalent: "")
+        hide.target = self; hide.tag = 2; menu.addItem(hide)
+        menu.addItem(.separator())
+        let quit = NSMenuItem(title: "Quit Valya", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quit.target = NSApp; menu.addItem(quit)
+        statusItem.menu = menu
+    }
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.item(withTag: 1)?.title = model.speaking ? "Speaking · microphone paused" : model.microphone
+        menu.item(withTag: 2)?.isEnabled = window.isVisible
+    }
+    @objc func showChat(_ sender: Any?) {
+        NSApp.setActivationPolicy(.regular)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+    @objc func hideChat(_ sender: Any?) {
+        window.orderOut(nil)
+        NSApp.setActivationPolicy(.accessory)
+    }
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        hideChat(nil)
+        return false
+    }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showChat(nil)
+        return true
+    }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard model?.process.isRunning == true else { return .terminateNow }
         model.onExit = { sender.reply(toApplicationShouldTerminate: true) }; model.stop(); return .terminateLater

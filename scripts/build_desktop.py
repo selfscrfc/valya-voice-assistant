@@ -11,7 +11,7 @@ app = root / 'build/Wchat.app/Contents'
 with (app / 'Info.plist').open('wb') as stream:
     plistlib.dump({
         'CFBundleExecutable': 'Wchat', 'CFBundleIdentifier': 'org.selfscrfc.wchat',
-        'CFBundleName': 'Chat', 'CFBundleDevelopmentRegion': 'en', 'CFBundlePackageType': 'APPL', 'CFBundleVersion': '1',
+        'CFBundleName': 'Valya', 'CFBundleDisplayName': 'Valya', 'CFBundleDevelopmentRegion': 'en', 'CFBundlePackageType': 'APPL', 'CFBundleVersion': '1',
         'CFBundleShortVersionString': '0.2.0', 'LSMinimumSystemVersion': '14.0',
         'NSMicrophoneUsageDescription': 'Listens for the wake word “чат” and transcribes commands locally.',
         'WChatProjectRoot': str(root), 'NSHighResolutionCapable': True,

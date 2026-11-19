@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 @main struct NativeRegression {
     @MainActor static func main() throws {
@@ -44,6 +45,21 @@ import Foundation
         check(!model.speaking && !model.busy, "playback completion must clear the Stop control")
         try receive(["kind": "speech_error", "text": "test"])
         check(model.error == "Speech playback: test", "playback errors must be visible")
+        let application = NSApplication.shared
+        let delegate = AppDelegate()
+        check(!delegate.applicationShouldTerminateAfterLastWindowClosed(application),
+              "closing chat must keep the background assistant running")
+        delegate.model = model
+        delegate.window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
+                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        delegate.installStatusMenu()
+        check(delegate.statusItem.menu?.items.contains { $0.title == "Show Chat" && $0.target === delegate } == true,
+              "menu bar must provide a chat reopen action")
+        check(delegate.statusItem.menu?.items.contains { $0.title == "Quit Valya" && $0.target === application } == true,
+              "menu bar must provide explicit quit")
+        check(!delegate.windowShouldClose(delegate.window), "close must hide and retain the chat window")
+        check(!delegate.window.isVisible, "hidden chat must not remain onscreen")
+        NSStatusBar.system.removeStatusItem(delegate.statusItem)
         print("Native regression checks passed")
     }
 }

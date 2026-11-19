@@ -13,9 +13,12 @@ test:
 run:
 	./run
 
-.PHONY: desktop build-desktop
+.PHONY: desktop build-desktop install-desktop
 build-desktop:
 	.venv/bin/python scripts/build_desktop.py
+
+install-desktop: build-desktop
+	.venv/bin/python scripts/install_desktop.py
 
 desktop:
 	./desktop
